@@ -232,16 +232,19 @@ public abstract class BufferedPersistenceIntegration {
             for (int i = 0; i < 12; i++) {
                 bigString = bigString + "_" + bigString;
             }
-            System.out.println("Creating funky long address");
+
+            // Creating funky long address
             persistence.createOrOverwrite(transaction, toDocument(namespace, "FunkyLongAddress", "newyork", createAddress(bigString, "NY", "USA"), oct18)).join();
 
-            System.out.println("Finding funky long address by city");
+            // Finding funky long address by city
             int findSize = size(persistence.find(transaction, now, namespace, "FunkyLongAddress", "city", bigString, null, 100).join());
             assertEquals(findSize, 1);
-            System.out.println("Finding funky long address by city (with non-matching value)");
+
+            // Finding funky long address by city (with non-matching value)
             int findExpectNoMatchSize = size(persistence.find(transaction, now, namespace, "FunkyLongAddress", "city", bigString + "1", null, 100).join());
             assertEquals(findExpectNoMatchSize, 0);
-            System.out.println("Deleting funky long address");
+
+            // Deleting funky long address
             persistence.delete(transaction, namespace, "FunkyLongAddress", "newyork", oct18, PersistenceDeletePolicy.FAIL_IF_INCOMING_LINKS).join();
         }
     }
