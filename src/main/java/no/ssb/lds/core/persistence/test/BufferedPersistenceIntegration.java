@@ -1,5 +1,6 @@
 package no.ssb.lds.core.persistence.test;
 
+import no.ssb.lds.api.persistence.FragmentType;
 import no.ssb.lds.api.persistence.Persistence;
 import no.ssb.lds.api.persistence.PersistenceDeletePolicy;
 import no.ssb.lds.api.persistence.Transaction;
@@ -279,11 +280,14 @@ public abstract class BufferedPersistenceIntegration {
             } else if (untypedValue instanceof JSONObject) {
                 addFragments(key, pathPrefix + "." + path, (JSONObject) untypedValue, leafNodeByPath);
             } else if (untypedValue instanceof JSONArray) {
+                throw new UnsupportedOperationException("JSONArray");
             } else if (untypedValue instanceof String) {
                 String value = (String) untypedValue;
-                leafNodeByPath.put(path, new DocumentLeafNode(key, path, value, 8 * 1024));
+                leafNodeByPath.put(path, new DocumentLeafNode(key, path, FragmentType.STRING, value, 8 * 1024));
             } else if (untypedValue instanceof Number) {
+                throw new UnsupportedOperationException("Number");
             } else if (untypedValue instanceof Boolean) {
+                throw new UnsupportedOperationException("Boolean");
             }
         }
     }
