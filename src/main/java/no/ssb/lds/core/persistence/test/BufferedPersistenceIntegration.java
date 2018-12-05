@@ -6,6 +6,7 @@ import no.ssb.lds.api.persistence.PersistenceDeletePolicy;
 import no.ssb.lds.api.persistence.Transaction;
 import no.ssb.lds.api.persistence.buffered.DefaultBufferedPersistence;
 import no.ssb.lds.api.persistence.buffered.Document;
+import no.ssb.lds.api.persistence.buffered.DocumentIterator;
 import no.ssb.lds.api.persistence.buffered.DocumentKey;
 import no.ssb.lds.api.persistence.buffered.DocumentLeafNode;
 import org.json.JSONArray;
@@ -15,8 +16,11 @@ import org.testng.annotations.Test;
 import java.time.ZoneId;
 import java.time.ZonedDateTime;
 import java.util.Iterator;
+import java.util.LinkedHashSet;
 import java.util.Map;
+import java.util.Set;
 import java.util.TreeMap;
+import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.TimeUnit;
 
 import static org.testng.Assert.assertEquals;
@@ -27,12 +31,14 @@ import static org.testng.Assert.assertTrue;
 public abstract class BufferedPersistenceIntegration {
 
     protected final String namespace;
+    protected final int capacity;
 
     protected DefaultBufferedPersistence persistence;
     protected Persistence streaming;
 
-    protected BufferedPersistenceIntegration(String namespace) {
+    protected BufferedPersistenceIntegration(String namespace, int capacity) {
         this.namespace = namespace;
+        this.capacity = capacity;
     }
 
     @Test
@@ -74,8 +80,12 @@ public abstract class BufferedPersistenceIntegration {
 
             ZonedDateTime oct18 = ZonedDateTime.of(2018, 10, 7, 19, 49, 26, (int) TimeUnit.MILLISECONDS.toNanos(307), ZoneId.of("Etc/UTC"));
             Document input = toDocument(namespace, "Person", "john", createPerson("John", "Smith"), oct18);
-            persistence.createOrOverwrite(transaction, input).join();
-            Document output = persistence.read(transaction, oct18, namespace, "Person", "john").join().next();
+            CompletableFuture<Void> completableFuture = persistence.createOrOverwrite(transaction, input);
+            completableFuture.join();
+            CompletableFuture<DocumentIterator> completableDocumentIterator = persistence.read(transaction, oct18, namespace, "Person", "john");
+            DocumentIterator documentIterator = completableDocumentIterator.join();
+            assertTrue(documentIterator.hasNext());
+            Document output = documentIterator.next();
             assertNotNull(output);
             assertFalse(output == input);
             assertEquals(output, input);
@@ -97,10 +107,15 @@ public abstract class BufferedPersistenceIntegration {
             Document input2 = toDocument(namespace, "Address", "newyork", createAddress("New York", "NY", "USA"), jan1664);
             persistence.createOrOverwrite(transaction, input2).join();
             Iterator<Document> iterator = persistence.readAllVersions(transaction, namespace, "Address", "newyork", null, 100).join();
-            assertEquals(iterator.next(), input2);
-            assertEquals(iterator.next(), input1);
-            assertEquals(iterator.next(), input0);
+            Set<DocumentKey> actual = new LinkedHashSet<>();
+            assertTrue(iterator.hasNext());
+            actual.add(iterator.next().key());
+            assertTrue(iterator.hasNext());
+            actual.add(iterator.next().key());
+            assertTrue(iterator.hasNext());
+            actual.add(iterator.next().key());
             assertFalse(iterator.hasNext());
+            assertEquals(actual, Set.of(input0.key(), input1.key(), input2.key()));
         }
     }
 
@@ -149,6 +164,25 @@ public abstract class BufferedPersistenceIntegration {
             persistence.createOrOverwrite(transaction, toDocument(namespace, "Person", "john", createPerson("John", "Smith"), oct18)).join();
 
             assertEquals(size(persistence.readVersions(transaction, feb10, sep18, namespace, "Person", "john", null, 100).join()), 2);
+        }
+    }
+
+
+    @Test
+    public void thatReadAllVersionsWorks() {
+        try (Transaction transaction = persistence.createTransaction(false)) {
+            persistence.deleteAllVersions(transaction, namespace, "Person", "john", PersistenceDeletePolicy.FAIL_IF_INCOMING_LINKS).join();
+
+            ZonedDateTime aug92 = ZonedDateTime.of(1992, 8, 1, 13, 43, 20, (int) TimeUnit.MILLISECONDS.toNanos(301), ZoneId.of("Etc/UTC"));
+            ZonedDateTime feb10 = ZonedDateTime.of(2010, 2, 3, 15, 45, 22, (int) TimeUnit.MILLISECONDS.toNanos(303), ZoneId.of("Etc/UTC"));
+            ZonedDateTime nov13 = ZonedDateTime.of(2013, 11, 5, 17, 47, 24, (int) TimeUnit.MILLISECONDS.toNanos(305), ZoneId.of("Etc/UTC"));
+            ZonedDateTime sep18 = ZonedDateTime.of(2018, 9, 6, 18, 48, 25, (int) TimeUnit.MILLISECONDS.toNanos(306), ZoneId.of("Etc/UTC"));
+            ZonedDateTime oct18 = ZonedDateTime.of(2018, 10, 7, 19, 49, 26, (int) TimeUnit.MILLISECONDS.toNanos(307), ZoneId.of("Etc/UTC"));
+            persistence.createOrOverwrite(transaction, toDocument(namespace, "Person", "john", createPerson("John", "Smith"), aug92)).join();
+            persistence.createOrOverwrite(transaction, toDocument(namespace, "Person", "john", createPerson("James", "Smith"), nov13)).join();
+            persistence.createOrOverwrite(transaction, toDocument(namespace, "Person", "john", createPerson("John", "Smith"), oct18)).join();
+
+            assertEquals(size(persistence.readAllVersions(transaction, namespace, "Person", "john", null, 100).join()), 3);
         }
     }
 
@@ -265,14 +299,14 @@ public abstract class BufferedPersistenceIntegration {
         return address;
     }
 
-    protected static Document toDocument(String namespace, String entity, String id, JSONObject json, ZonedDateTime timestamp) {
+    protected Document toDocument(String namespace, String entity, String id, JSONObject json, ZonedDateTime timestamp) {
         DocumentKey key = new DocumentKey(namespace, entity, id, timestamp);
         Map<String, DocumentLeafNode> leafNodeByPath = new TreeMap<>();
         addFragments(key, "$.", json, leafNodeByPath);
         return new Document(key, leafNodeByPath, false);
     }
 
-    protected static void addFragments(DocumentKey key, String pathPrefix, JSONObject json, Map<String, DocumentLeafNode> leafNodeByPath) {
+    protected void addFragments(DocumentKey key, String pathPrefix, JSONObject json, Map<String, DocumentLeafNode> leafNodeByPath) {
         for (Map.Entry<String, Object> entry : json.toMap().entrySet()) {
             String path = entry.getKey();
             Object untypedValue = entry.getValue();
@@ -283,7 +317,7 @@ public abstract class BufferedPersistenceIntegration {
                 throw new UnsupportedOperationException("JSONArray");
             } else if (untypedValue instanceof String) {
                 String value = (String) untypedValue;
-                leafNodeByPath.put(path, new DocumentLeafNode(key, path, FragmentType.STRING, value, 8 * 1024));
+                leafNodeByPath.put(path, new DocumentLeafNode(key, path, FragmentType.STRING, value, capacity));
             } else if (untypedValue instanceof Number) {
                 throw new UnsupportedOperationException("Number");
             } else if (untypedValue instanceof Boolean) {
