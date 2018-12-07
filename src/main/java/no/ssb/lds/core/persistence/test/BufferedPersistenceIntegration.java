@@ -1,14 +1,14 @@
 package no.ssb.lds.core.persistence.test;
 
-import no.ssb.lds.api.persistence.FragmentType;
-import no.ssb.lds.api.persistence.Persistence;
 import no.ssb.lds.api.persistence.PersistenceDeletePolicy;
 import no.ssb.lds.api.persistence.Transaction;
 import no.ssb.lds.api.persistence.buffered.DefaultBufferedPersistence;
-import no.ssb.lds.api.persistence.buffered.Document;
-import no.ssb.lds.api.persistence.buffered.DocumentIterator;
 import no.ssb.lds.api.persistence.buffered.DocumentKey;
-import no.ssb.lds.api.persistence.buffered.DocumentLeafNode;
+import no.ssb.lds.api.persistence.buffered.FlattenedDocument;
+import no.ssb.lds.api.persistence.buffered.FlattenedDocumentIterator;
+import no.ssb.lds.api.persistence.buffered.FlattenedDocumentLeafNode;
+import no.ssb.lds.api.persistence.streaming.FragmentType;
+import no.ssb.lds.api.persistence.streaming.Persistence;
 import org.json.JSONArray;
 import org.json.JSONObject;
 import org.testng.annotations.Test;
@@ -47,18 +47,18 @@ public abstract class BufferedPersistenceIntegration {
             ZonedDateTime jan1624 = ZonedDateTime.of(1624, 1, 1, 12, 0, 0, (int) TimeUnit.MILLISECONDS.toNanos(0), ZoneId.of("Etc/UTC"));
             ZonedDateTime jan1626 = ZonedDateTime.of(1626, 1, 1, 12, 0, 0, (int) TimeUnit.MILLISECONDS.toNanos(0), ZoneId.of("Etc/UTC"));
             ZonedDateTime jan1664 = ZonedDateTime.of(1664, 1, 1, 12, 0, 0, (int) TimeUnit.MILLISECONDS.toNanos(0), ZoneId.of("Etc/UTC"));
-            Document input0 = toDocument(namespace, "Address", "newyork", createAddress("", "NY", "USA"), jan1624);
+            FlattenedDocument input0 = toDocument(namespace, "Address", "newyork", createAddress("", "NY", "USA"), jan1624);
             persistence.createOrOverwrite(transaction, input0).join();
-            Document input1 = toDocument(namespace, "Address", "newyork", createAddress("New Amsterdam", "NY", "USA"), jan1626);
+            FlattenedDocument input1 = toDocument(namespace, "Address", "newyork", createAddress("New Amsterdam", "NY", "USA"), jan1626);
             persistence.createOrOverwrite(transaction, input1).join();
-            Document input2 = toDocument(namespace, "Address", "newyork", createAddress("New York", "NY", "USA"), jan1664);
+            FlattenedDocument input2 = toDocument(namespace, "Address", "newyork", createAddress("New York", "NY", "USA"), jan1664);
             persistence.createOrOverwrite(transaction, input2).join();
-            Iterator<Document> iteratorWithDocuments = persistence.readAllVersions(transaction, namespace, "Address", "newyork", null, 100).join();
+            Iterator<FlattenedDocument> iteratorWithDocuments = persistence.readAllVersions(transaction, namespace, "Address", "newyork", null, 100).join();
             assertEquals(size(iteratorWithDocuments), 3);
 
             persistence.deleteAllVersions(transaction, namespace, "Address", "newyork", PersistenceDeletePolicy.FAIL_IF_INCOMING_LINKS).join();
 
-            Iterator<Document> iterator = persistence.readAllVersions(transaction, namespace, "Address", "newyork", null, 100).join();
+            Iterator<FlattenedDocument> iterator = persistence.readAllVersions(transaction, namespace, "Address", "newyork", null, 100).join();
 
             assertEquals(size(iterator), 0);
         }
@@ -79,13 +79,13 @@ public abstract class BufferedPersistenceIntegration {
             persistence.deleteAllVersions(transaction, namespace, "Person", "john", PersistenceDeletePolicy.FAIL_IF_INCOMING_LINKS).join();
 
             ZonedDateTime oct18 = ZonedDateTime.of(2018, 10, 7, 19, 49, 26, (int) TimeUnit.MILLISECONDS.toNanos(307), ZoneId.of("Etc/UTC"));
-            Document input = toDocument(namespace, "Person", "john", createPerson("John", "Smith"), oct18);
+            FlattenedDocument input = toDocument(namespace, "Person", "john", createPerson("John", "Smith"), oct18);
             CompletableFuture<Void> completableFuture = persistence.createOrOverwrite(transaction, input);
             completableFuture.join();
-            CompletableFuture<DocumentIterator> completableDocumentIterator = persistence.read(transaction, oct18, namespace, "Person", "john");
-            DocumentIterator documentIterator = completableDocumentIterator.join();
-            assertTrue(documentIterator.hasNext());
-            Document output = documentIterator.next();
+            CompletableFuture<FlattenedDocumentIterator> completableDocumentIterator = persistence.read(transaction, oct18, namespace, "Person", "john");
+            FlattenedDocumentIterator flattenedDocumentIterator = completableDocumentIterator.join();
+            assertTrue(flattenedDocumentIterator.hasNext());
+            FlattenedDocument output = flattenedDocumentIterator.next();
             assertNotNull(output);
             assertFalse(output == input);
             assertEquals(output, input);
@@ -100,13 +100,13 @@ public abstract class BufferedPersistenceIntegration {
             ZonedDateTime jan1624 = ZonedDateTime.of(1624, 1, 1, 12, 0, 0, (int) TimeUnit.MILLISECONDS.toNanos(0), ZoneId.of("Etc/UTC"));
             ZonedDateTime jan1626 = ZonedDateTime.of(1626, 1, 1, 12, 0, 0, (int) TimeUnit.MILLISECONDS.toNanos(0), ZoneId.of("Etc/UTC"));
             ZonedDateTime jan1664 = ZonedDateTime.of(1664, 1, 1, 12, 0, 0, (int) TimeUnit.MILLISECONDS.toNanos(0), ZoneId.of("Etc/UTC"));
-            Document input0 = toDocument(namespace, "Address", "newyork", createAddress("", "NY", "USA"), jan1624);
+            FlattenedDocument input0 = toDocument(namespace, "Address", "newyork", createAddress("", "NY", "USA"), jan1624);
             persistence.createOrOverwrite(transaction, input0).join();
-            Document input1 = toDocument(namespace, "Address", "newyork", createAddress("New Amsterdam", "NY", "USA"), jan1626);
+            FlattenedDocument input1 = toDocument(namespace, "Address", "newyork", createAddress("New Amsterdam", "NY", "USA"), jan1626);
             persistence.createOrOverwrite(transaction, input1).join();
-            Document input2 = toDocument(namespace, "Address", "newyork", createAddress("New York", "NY", "USA"), jan1664);
+            FlattenedDocument input2 = toDocument(namespace, "Address", "newyork", createAddress("New York", "NY", "USA"), jan1664);
             persistence.createOrOverwrite(transaction, input2).join();
-            Iterator<Document> iterator = persistence.readAllVersions(transaction, namespace, "Address", "newyork", null, 100).join();
+            Iterator<FlattenedDocument> iterator = persistence.readAllVersions(transaction, namespace, "Address", "newyork", null, 100).join();
             Set<DocumentKey> actual = new LinkedHashSet<>();
             assertTrue(iterator.hasNext());
             actual.add(iterator.next().key());
@@ -205,10 +205,10 @@ public abstract class BufferedPersistenceIntegration {
             persistence.createOrOverwrite(transaction, toDocument(namespace, "Person", "john", createPerson("James", "Smith"), nov13)).join();
             persistence.createOrOverwrite(transaction, toDocument(namespace, "Person", "john", createPerson("John", "Smith"), oct18)).join();
 
-            Iterator<Document> iterator = persistence.find(transaction, sep18, namespace, "Person", "lastname", "Smith", null, 100).join();
+            Iterator<FlattenedDocument> iterator = persistence.find(transaction, sep18, namespace, "Person", "lastname", "Smith", null, 100).join();
 
-            Document person1 = iterator.next();
-            Document person2 = iterator.next();
+            FlattenedDocument person1 = iterator.next();
+            FlattenedDocument person2 = iterator.next();
             assertFalse(iterator.hasNext());
 
             if (person1.contains("firstname", "Jane")) {
@@ -240,10 +240,10 @@ public abstract class BufferedPersistenceIntegration {
             persistence.createOrOverwrite(transaction, toDocument(namespace, "Person", "john", createPerson("James", "Smith"), nov13)).join();
             persistence.createOrOverwrite(transaction, toDocument(namespace, "Person", "john", createPerson("John", "Smith"), oct18)).join();
 
-            Iterator<Document> iterator = persistence.findAll(transaction, dec11, namespace, "Person", null, 100).join();
+            Iterator<FlattenedDocument> iterator = persistence.findAll(transaction, dec11, namespace, "Person", null, 100).join();
 
-            Document person1 = iterator.next();
-            Document person2 = iterator.next();
+            FlattenedDocument person1 = iterator.next();
+            FlattenedDocument person2 = iterator.next();
             assertFalse(iterator.hasNext());
 
             if (person1.contains("firstname", "Jane")) {
@@ -299,14 +299,14 @@ public abstract class BufferedPersistenceIntegration {
         return address;
     }
 
-    protected Document toDocument(String namespace, String entity, String id, JSONObject json, ZonedDateTime timestamp) {
+    protected FlattenedDocument toDocument(String namespace, String entity, String id, JSONObject json, ZonedDateTime timestamp) {
         DocumentKey key = new DocumentKey(namespace, entity, id, timestamp);
-        Map<String, DocumentLeafNode> leafNodeByPath = new TreeMap<>();
+        Map<String, FlattenedDocumentLeafNode> leafNodeByPath = new TreeMap<>();
         addFragments(key, "$.", json, leafNodeByPath);
-        return new Document(key, leafNodeByPath, false);
+        return new FlattenedDocument(key, leafNodeByPath, false);
     }
 
-    protected void addFragments(DocumentKey key, String pathPrefix, JSONObject json, Map<String, DocumentLeafNode> leafNodeByPath) {
+    protected void addFragments(DocumentKey key, String pathPrefix, JSONObject json, Map<String, FlattenedDocumentLeafNode> leafNodeByPath) {
         for (Map.Entry<String, Object> entry : json.toMap().entrySet()) {
             String path = entry.getKey();
             Object untypedValue = entry.getValue();
@@ -317,7 +317,7 @@ public abstract class BufferedPersistenceIntegration {
                 throw new UnsupportedOperationException("JSONArray");
             } else if (untypedValue instanceof String) {
                 String value = (String) untypedValue;
-                leafNodeByPath.put(path, new DocumentLeafNode(key, path, FragmentType.STRING, value, capacity));
+                leafNodeByPath.put(path, new FlattenedDocumentLeafNode(key, path, FragmentType.STRING, value, capacity));
             } else if (untypedValue instanceof Number) {
                 throw new UnsupportedOperationException("Number");
             } else if (untypedValue instanceof Boolean) {
