@@ -5,6 +5,9 @@ import no.ssb.lds.api.persistence.PersistenceDeletePolicy;
 import no.ssb.lds.api.persistence.Transaction;
 import no.ssb.lds.api.persistence.json.JsonDocument;
 import no.ssb.lds.api.persistence.json.JsonPersistence;
+import no.ssb.lds.api.specification.Specification;
+import no.ssb.lds.api.specification.SpecificationElement;
+import no.ssb.lds.api.specification.SpecificationElementType;
 import org.json.JSONObject;
 import org.testng.annotations.Test;
 
@@ -12,6 +15,8 @@ import java.time.ZoneId;
 import java.time.ZonedDateTime;
 import java.util.Iterator;
 import java.util.LinkedHashSet;
+import java.util.List;
+import java.util.Map;
 import java.util.Set;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.TimeUnit;
@@ -23,12 +28,61 @@ import static org.testng.Assert.assertTrue;
 
 public abstract class PersistenceIntegrationTest {
 
+    protected final Specification specification;
     protected final String namespace;
-
     protected JsonPersistence persistence;
 
     protected PersistenceIntegrationTest(String namespace) {
         this.namespace = namespace;
+        this.specification = buildSpecification();
+    }
+
+    protected Specification buildSpecification() {
+        TestSpecificationElement personFirstname = new TestSpecificationElement("firstname", SpecificationElementType.EMBEDDED, Set.of("string"), List.of(), Set.of(), null, null);
+        TestSpecificationElement personLastname = new TestSpecificationElement("lastname", SpecificationElementType.EMBEDDED, Set.of("string"), List.of(), Set.of(), null, null);
+        TestSpecificationElement person = new TestSpecificationElement("Person", SpecificationElementType.MANAGED, Set.of("object"), List.of(), Set.of(),
+                Map.of("firstname", personFirstname, "lastname", personLastname), null);
+        personFirstname.parent(person);
+        personLastname.parent(person);
+        TestSpecificationElement addressCity = new TestSpecificationElement("city", SpecificationElementType.EMBEDDED, Set.of("string"), List.of(), Set.of(), null, null);
+        TestSpecificationElement addressState = new TestSpecificationElement("state", SpecificationElementType.EMBEDDED, Set.of("string"), List.of(), Set.of(), null, null);
+        TestSpecificationElement addressCountry = new TestSpecificationElement("country", SpecificationElementType.EMBEDDED, Set.of("string"), List.of(), Set.of(), null, null);
+        TestSpecificationElement address = new TestSpecificationElement("Address", SpecificationElementType.MANAGED, Set.of("object"), List.of(), Set.of(),
+                Map.of("city", addressCity, "state", addressState, "country", addressCountry), null);
+        addressCity.parent(address);
+        addressState.parent(address);
+        addressCountry.parent(address);
+        TestSpecificationElement funkyLongAddressCity = new TestSpecificationElement("city", SpecificationElementType.EMBEDDED, Set.of("string"), List.of(), Set.of(), null, null);
+        TestSpecificationElement funkyLongAddressState = new TestSpecificationElement("state", SpecificationElementType.EMBEDDED, Set.of("string"), List.of(), Set.of(), null, null);
+        TestSpecificationElement funkyLongAddressCountry = new TestSpecificationElement("country", SpecificationElementType.EMBEDDED, Set.of("string"), List.of(), Set.of(), null, null);
+        TestSpecificationElement funkyLongAddress = new TestSpecificationElement("FunkyLongAddress", SpecificationElementType.MANAGED, Set.of("object"), List.of(), Set.of(),
+                Map.of("city", funkyLongAddressCity, "state", funkyLongAddressState, "country", funkyLongAddressCountry), null);
+        funkyLongAddressCity.parent(funkyLongAddress);
+        funkyLongAddressState.parent(funkyLongAddress);
+        funkyLongAddressCountry.parent(funkyLongAddress);
+        TestSpecificationElement root = new TestSpecificationElement(
+                "root",
+                SpecificationElementType.ROOT,
+                Set.of("object"),
+                List.of(),
+                Set.of(),
+                Map.of("Person", person, "Address", address, "FunkyLongAddress", funkyLongAddress),
+                null
+        );
+        person.parent(root);
+        address.parent(root);
+        funkyLongAddress.parent(root);
+        return new Specification() {
+            @Override
+            public SpecificationElement getRootElement() {
+                return root;
+            }
+
+            @Override
+            public Set<String> getManagedDomains() {
+                return Set.of("Person", "Address", "FunkyLongAddress");
+            }
+        };
     }
 
     @Test
@@ -38,11 +92,11 @@ public abstract class PersistenceIntegrationTest {
             ZonedDateTime jan1626 = ZonedDateTime.of(1626, 1, 1, 12, 0, 0, (int) TimeUnit.MILLISECONDS.toNanos(0), ZoneId.of("Etc/UTC"));
             ZonedDateTime jan1664 = ZonedDateTime.of(1664, 1, 1, 12, 0, 0, (int) TimeUnit.MILLISECONDS.toNanos(0), ZoneId.of("Etc/UTC"));
             JsonDocument input0 = toDocument(namespace, "Address", "newyork", createAddress("", "NY", "USA"), jan1624);
-            persistence.createOrOverwrite(transaction, input0).join();
+            persistence.createOrOverwrite(transaction, input0, specification).join();
             JsonDocument input1 = toDocument(namespace, "Address", "newyork", createAddress("New Amsterdam", "NY", "USA"), jan1626);
-            persistence.createOrOverwrite(transaction, input1).join();
+            persistence.createOrOverwrite(transaction, input1, specification).join();
             JsonDocument input2 = toDocument(namespace, "Address", "newyork", createAddress("New York", "NY", "USA"), jan1664);
-            persistence.createOrOverwrite(transaction, input2).join();
+            persistence.createOrOverwrite(transaction, input2, specification).join();
             Iterator<JsonDocument> iteratorWithDocuments = persistence.readAllVersions(transaction, namespace, "Address", "newyork", null, 100).join().iterator();
             assertEquals(size(iteratorWithDocuments), 3);
 
@@ -70,7 +124,7 @@ public abstract class PersistenceIntegrationTest {
 
             ZonedDateTime oct18 = ZonedDateTime.of(2018, 10, 7, 19, 49, 26, (int) TimeUnit.MILLISECONDS.toNanos(307), ZoneId.of("Etc/UTC"));
             JsonDocument input = toDocument(namespace, "Person", "john", createPerson("John", "Smith"), oct18);
-            CompletableFuture<Void> completableFuture = persistence.createOrOverwrite(transaction, input);
+            CompletableFuture<Void> completableFuture = persistence.createOrOverwrite(transaction, input, specification);
             completableFuture.join();
             CompletableFuture<JsonDocument> completableDocumentIterator = persistence.read(transaction, oct18, namespace, "Person", "john");
             JsonDocument output = completableDocumentIterator.join();
@@ -89,11 +143,11 @@ public abstract class PersistenceIntegrationTest {
             ZonedDateTime jan1626 = ZonedDateTime.of(1626, 1, 1, 12, 0, 0, (int) TimeUnit.MILLISECONDS.toNanos(0), ZoneId.of("Etc/UTC"));
             ZonedDateTime jan1664 = ZonedDateTime.of(1664, 1, 1, 12, 0, 0, (int) TimeUnit.MILLISECONDS.toNanos(0), ZoneId.of("Etc/UTC"));
             JsonDocument input0 = toDocument(namespace, "Address", "newyork", createAddress("", "NY", "USA"), jan1624);
-            persistence.createOrOverwrite(transaction, input0).join();
+            persistence.createOrOverwrite(transaction, input0, specification).join();
             JsonDocument input1 = toDocument(namespace, "Address", "newyork", createAddress("New Amsterdam", "NY", "USA"), jan1626);
-            persistence.createOrOverwrite(transaction, input1).join();
+            persistence.createOrOverwrite(transaction, input1, specification).join();
             JsonDocument input2 = toDocument(namespace, "Address", "newyork", createAddress("New York", "NY", "USA"), jan1664);
-            persistence.createOrOverwrite(transaction, input2).join();
+            persistence.createOrOverwrite(transaction, input2, specification).join();
             Iterator<JsonDocument> iterator = persistence.readAllVersions(transaction, namespace, "Address", "newyork", null, 100).join().iterator();
             Set<DocumentKey> actual = new LinkedHashSet<>();
             assertTrue(iterator.hasNext());
@@ -117,9 +171,9 @@ public abstract class PersistenceIntegrationTest {
             ZonedDateTime feb1663 = ZonedDateTime.of(1663, 2, 1, 0, 0, 0, (int) TimeUnit.MILLISECONDS.toNanos(0), ZoneId.of("Etc/UTC"));
             ZonedDateTime jan1664 = ZonedDateTime.of(1664, 1, 1, 12, 0, 0, (int) TimeUnit.MILLISECONDS.toNanos(0), ZoneId.of("Etc/UTC"));
 
-            persistence.createOrOverwrite(transaction, toDocument(namespace, "Address", "newyork", createAddress("", "NY", "USA"), jan1624)).join();
-            persistence.createOrOverwrite(transaction, toDocument(namespace, "Address", "newyork", createAddress("New Amsterdam", "NY", "USA"), jan1626)).join();
-            persistence.createOrOverwrite(transaction, toDocument(namespace, "Address", "newyork", createAddress("New York", "NY", "USA"), jan1664)).join();
+            persistence.createOrOverwrite(transaction, toDocument(namespace, "Address", "newyork", createAddress("", "NY", "USA"), jan1624), specification).join();
+            persistence.createOrOverwrite(transaction, toDocument(namespace, "Address", "newyork", createAddress("New Amsterdam", "NY", "USA"), jan1626), specification).join();
+            persistence.createOrOverwrite(transaction, toDocument(namespace, "Address", "newyork", createAddress("New York", "NY", "USA"), jan1664), specification).join();
 
             assertEquals(size(persistence.readAllVersions(transaction, namespace, "Address", "newyork", null, 100).join().iterator()), 3);
 
@@ -147,9 +201,9 @@ public abstract class PersistenceIntegrationTest {
             ZonedDateTime nov13 = ZonedDateTime.of(2013, 11, 5, 17, 47, 24, (int) TimeUnit.MILLISECONDS.toNanos(305), ZoneId.of("Etc/UTC"));
             ZonedDateTime sep18 = ZonedDateTime.of(2018, 9, 6, 18, 48, 25, (int) TimeUnit.MILLISECONDS.toNanos(306), ZoneId.of("Etc/UTC"));
             ZonedDateTime oct18 = ZonedDateTime.of(2018, 10, 7, 19, 49, 26, (int) TimeUnit.MILLISECONDS.toNanos(307), ZoneId.of("Etc/UTC"));
-            persistence.createOrOverwrite(transaction, toDocument(namespace, "Person", "john", createPerson("John", "Smith"), aug92)).join();
-            persistence.createOrOverwrite(transaction, toDocument(namespace, "Person", "john", createPerson("James", "Smith"), nov13)).join();
-            persistence.createOrOverwrite(transaction, toDocument(namespace, "Person", "john", createPerson("John", "Smith"), oct18)).join();
+            persistence.createOrOverwrite(transaction, toDocument(namespace, "Person", "john", createPerson("John", "Smith"), aug92), specification).join();
+            persistence.createOrOverwrite(transaction, toDocument(namespace, "Person", "john", createPerson("James", "Smith"), nov13), specification).join();
+            persistence.createOrOverwrite(transaction, toDocument(namespace, "Person", "john", createPerson("John", "Smith"), oct18), specification).join();
 
             assertEquals(size(persistence.readVersions(transaction, feb10, sep18, namespace, "Person", "john", null, 100).join().iterator()), 2);
         }
@@ -166,9 +220,9 @@ public abstract class PersistenceIntegrationTest {
             ZonedDateTime nov13 = ZonedDateTime.of(2013, 11, 5, 17, 47, 24, (int) TimeUnit.MILLISECONDS.toNanos(305), ZoneId.of("Etc/UTC"));
             ZonedDateTime sep18 = ZonedDateTime.of(2018, 9, 6, 18, 48, 25, (int) TimeUnit.MILLISECONDS.toNanos(306), ZoneId.of("Etc/UTC"));
             ZonedDateTime oct18 = ZonedDateTime.of(2018, 10, 7, 19, 49, 26, (int) TimeUnit.MILLISECONDS.toNanos(307), ZoneId.of("Etc/UTC"));
-            persistence.createOrOverwrite(transaction, toDocument(namespace, "Person", "john", createPerson("John", "Smith"), aug92)).join();
-            persistence.createOrOverwrite(transaction, toDocument(namespace, "Person", "john", createPerson("James", "Smith"), nov13)).join();
-            persistence.createOrOverwrite(transaction, toDocument(namespace, "Person", "john", createPerson("John", "Smith"), oct18)).join();
+            persistence.createOrOverwrite(transaction, toDocument(namespace, "Person", "john", createPerson("John", "Smith"), aug92), specification).join();
+            persistence.createOrOverwrite(transaction, toDocument(namespace, "Person", "john", createPerson("James", "Smith"), nov13), specification).join();
+            persistence.createOrOverwrite(transaction, toDocument(namespace, "Person", "john", createPerson("John", "Smith"), oct18), specification).join();
 
             assertEquals(size(persistence.readAllVersions(transaction, namespace, "Person", "john", null, 100).join().iterator()), 3);
         }
@@ -180,7 +234,7 @@ public abstract class PersistenceIntegrationTest {
             persistence.deleteAllVersions(transaction, namespace, "Person", "simple", PersistenceDeletePolicy.FAIL_IF_INCOMING_LINKS).join();
             ZonedDateTime sep18 = ZonedDateTime.of(2018, 9, 6, 18, 48, 25, (int) TimeUnit.MILLISECONDS.toNanos(306), ZoneId.of("Etc/UTC"));
             ZonedDateTime oct18 = ZonedDateTime.of(2018, 10, 7, 19, 49, 26, (int) TimeUnit.MILLISECONDS.toNanos(307), ZoneId.of("Etc/UTC"));
-            persistence.createOrOverwrite(transaction, toDocument(namespace, "Person", "simple", new JSONObject().put("firstname", "Simple"), sep18)).join();
+            persistence.createOrOverwrite(transaction, toDocument(namespace, "Person", "simple", new JSONObject().put("firstname", "Simple"), sep18), specification).join();
 
             Iterator<JsonDocument> iterator = persistence.find(transaction, oct18, namespace, "Person", "$.firstname", "Simple", null, 100).join().iterator();
             assertTrue(iterator.hasNext());
@@ -202,11 +256,11 @@ public abstract class PersistenceIntegrationTest {
             ZonedDateTime nov13 = ZonedDateTime.of(2013, 11, 5, 17, 47, 24, (int) TimeUnit.MILLISECONDS.toNanos(305), ZoneId.of("Etc/UTC"));
             ZonedDateTime sep18 = ZonedDateTime.of(2018, 9, 6, 18, 48, 25, (int) TimeUnit.MILLISECONDS.toNanos(306), ZoneId.of("Etc/UTC"));
             ZonedDateTime oct18 = ZonedDateTime.of(2018, 10, 7, 19, 49, 26, (int) TimeUnit.MILLISECONDS.toNanos(307), ZoneId.of("Etc/UTC"));
-            persistence.createOrOverwrite(transaction, toDocument(namespace, "Person", "john", createPerson("John", "Smith"), aug92)).join();
-            persistence.createOrOverwrite(transaction, toDocument(namespace, "Person", "jane", createPerson("Jane", "Doe"), sep94)).join();
-            persistence.createOrOverwrite(transaction, toDocument(namespace, "Person", "jane", createPerson("Jane", "Smith"), feb10)).join();
-            persistence.createOrOverwrite(transaction, toDocument(namespace, "Person", "john", createPerson("James", "Smith"), nov13)).join();
-            persistence.createOrOverwrite(transaction, toDocument(namespace, "Person", "john", createPerson("John", "Smith"), oct18)).join();
+            persistence.createOrOverwrite(transaction, toDocument(namespace, "Person", "john", createPerson("John", "Smith"), aug92), specification).join();
+            persistence.createOrOverwrite(transaction, toDocument(namespace, "Person", "jane", createPerson("Jane", "Doe"), sep94), specification).join();
+            persistence.createOrOverwrite(transaction, toDocument(namespace, "Person", "jane", createPerson("Jane", "Smith"), feb10), specification).join();
+            persistence.createOrOverwrite(transaction, toDocument(namespace, "Person", "john", createPerson("James", "Smith"), nov13), specification).join();
+            persistence.createOrOverwrite(transaction, toDocument(namespace, "Person", "john", createPerson("John", "Smith"), oct18), specification).join();
 
             Iterator<JsonDocument> iterator = persistence.find(transaction, sep18, namespace, "Person", "$.lastname", "Smith", null, 100).join().iterator();
 
@@ -237,11 +291,11 @@ public abstract class PersistenceIntegrationTest {
             ZonedDateTime dec11 = ZonedDateTime.of(2011, 12, 4, 16, 46, 23, (int) TimeUnit.MILLISECONDS.toNanos(304), ZoneId.of("Etc/UTC"));
             ZonedDateTime nov13 = ZonedDateTime.of(2013, 11, 5, 17, 47, 24, (int) TimeUnit.MILLISECONDS.toNanos(305), ZoneId.of("Etc/UTC"));
             ZonedDateTime oct18 = ZonedDateTime.of(2018, 10, 7, 19, 49, 26, (int) TimeUnit.MILLISECONDS.toNanos(307), ZoneId.of("Etc/UTC"));
-            persistence.createOrOverwrite(transaction, toDocument(namespace, "Person", "john", createPerson("John", "Smith"), aug92)).join();
-            persistence.createOrOverwrite(transaction, toDocument(namespace, "Person", "jane", createPerson("Jane", "Doe"), sep94)).join();
-            persistence.createOrOverwrite(transaction, toDocument(namespace, "Person", "jane", createPerson("Jane", "Smith"), feb10)).join();
-            persistence.createOrOverwrite(transaction, toDocument(namespace, "Person", "john", createPerson("James", "Smith"), nov13)).join();
-            persistence.createOrOverwrite(transaction, toDocument(namespace, "Person", "john", createPerson("John", "Smith"), oct18)).join();
+            persistence.createOrOverwrite(transaction, toDocument(namespace, "Person", "john", createPerson("John", "Smith"), aug92), specification).join();
+            persistence.createOrOverwrite(transaction, toDocument(namespace, "Person", "jane", createPerson("Jane", "Doe"), sep94), specification).join();
+            persistence.createOrOverwrite(transaction, toDocument(namespace, "Person", "jane", createPerson("Jane", "Smith"), feb10), specification).join();
+            persistence.createOrOverwrite(transaction, toDocument(namespace, "Person", "john", createPerson("James", "Smith"), nov13), specification).join();
+            persistence.createOrOverwrite(transaction, toDocument(namespace, "Person", "john", createPerson("John", "Smith"), oct18), specification).join();
 
             Iterator<JsonDocument> iterator = persistence.findAll(transaction, dec11, namespace, "Person", null, 100).join().iterator();
 
@@ -273,7 +327,7 @@ public abstract class PersistenceIntegrationTest {
             }
 
             // Creating funky long address
-            persistence.createOrOverwrite(transaction, toDocument(namespace, "FunkyLongAddress", "newyork", createAddress(bigString, "NY", "USA"), oct18)).join();
+            persistence.createOrOverwrite(transaction, toDocument(namespace, "FunkyLongAddress", "newyork", createAddress(bigString, "NY", "USA"), oct18), specification).join();
 
             // Finding funky long address by city
             int findSize = size(persistence.find(transaction, now, namespace, "FunkyLongAddress", "city", bigString, null, 100).join().iterator());
