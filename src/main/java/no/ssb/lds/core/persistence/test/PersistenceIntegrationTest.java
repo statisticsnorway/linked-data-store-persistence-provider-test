@@ -6,7 +6,6 @@ import no.ssb.lds.api.persistence.Transaction;
 import no.ssb.lds.api.persistence.json.JsonDocument;
 import no.ssb.lds.api.persistence.json.JsonPersistence;
 import no.ssb.lds.api.specification.Specification;
-import no.ssb.lds.api.specification.SpecificationElement;
 import no.ssb.lds.api.specification.SpecificationElementType;
 import org.json.JSONObject;
 import org.testng.annotations.Test;
@@ -15,12 +14,12 @@ import java.time.ZoneId;
 import java.time.ZonedDateTime;
 import java.util.Iterator;
 import java.util.LinkedHashSet;
-import java.util.List;
-import java.util.Map;
 import java.util.Set;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.TimeUnit;
 
+import static no.ssb.lds.core.persistence.test.SpecificationBuilder.objectNode;
+import static no.ssb.lds.core.persistence.test.SpecificationBuilder.stringNode;
 import static org.testng.Assert.assertEquals;
 import static org.testng.Assert.assertFalse;
 import static org.testng.Assert.assertNotNull;
@@ -38,56 +37,29 @@ public abstract class PersistenceIntegrationTest {
     }
 
     protected Specification buildSpecification() {
-        TestSpecificationElement personFirstname = new TestSpecificationElement("firstname", SpecificationElementType.EMBEDDED, Set.of("string"), List.of(), Set.of(), null, null);
-        TestSpecificationElement personLastname = new TestSpecificationElement("lastname", SpecificationElementType.EMBEDDED, Set.of("string"), List.of(), Set.of(), null, null);
-        TestSpecificationElement person = new TestSpecificationElement("Person", SpecificationElementType.MANAGED, Set.of("object"), List.of(), Set.of(),
-                Map.of("firstname", personFirstname, "lastname", personLastname), null);
-        personFirstname.parent(person);
-        personLastname.parent(person);
-        TestSpecificationElement addressCity = new TestSpecificationElement("city", SpecificationElementType.EMBEDDED, Set.of("string"), List.of(), Set.of(), null, null);
-        TestSpecificationElement addressState = new TestSpecificationElement("state", SpecificationElementType.EMBEDDED, Set.of("string"), List.of(), Set.of(), null, null);
-        TestSpecificationElement addressCountry = new TestSpecificationElement("country", SpecificationElementType.EMBEDDED, Set.of("string"), List.of(), Set.of(), null, null);
-        TestSpecificationElement address = new TestSpecificationElement("Address", SpecificationElementType.MANAGED, Set.of("object"), List.of(), Set.of(),
-                Map.of("city", addressCity, "state", addressState, "country", addressCountry), null);
-        addressCity.parent(address);
-        addressState.parent(address);
-        addressCountry.parent(address);
-        TestSpecificationElement funkyLongAddressCity = new TestSpecificationElement("city", SpecificationElementType.EMBEDDED, Set.of("string"), List.of(), Set.of(), null, null);
-        TestSpecificationElement funkyLongAddressState = new TestSpecificationElement("state", SpecificationElementType.EMBEDDED, Set.of("string"), List.of(), Set.of(), null, null);
-        TestSpecificationElement funkyLongAddressCountry = new TestSpecificationElement("country", SpecificationElementType.EMBEDDED, Set.of("string"), List.of(), Set.of(), null, null);
-        TestSpecificationElement funkyLongAddress = new TestSpecificationElement("FunkyLongAddress", SpecificationElementType.MANAGED, Set.of("object"), List.of(), Set.of(),
-                Map.of("city", funkyLongAddressCity, "state", funkyLongAddressState, "country", funkyLongAddressCountry), null);
-        funkyLongAddressCity.parent(funkyLongAddress);
-        funkyLongAddressState.parent(funkyLongAddress);
-        funkyLongAddressCountry.parent(funkyLongAddress);
-        TestSpecificationElement root = new TestSpecificationElement(
-                "root",
-                SpecificationElementType.ROOT,
-                Set.of("object"),
-                List.of(),
-                Set.of(),
-                Map.of("Person", person, "Address", address, "FunkyLongAddress", funkyLongAddress),
-                null
-        );
-        person.parent(root);
-        address.parent(root);
-        funkyLongAddress.parent(root);
-        return new Specification() {
-            @Override
-            public SpecificationElement getRootElement() {
-                return root;
-            }
-
-            @Override
-            public Set<String> getManagedDomains() {
-                return Set.of("Person", "Address", "FunkyLongAddress");
-            }
-        };
+        return SpecificationBuilder.createSpecificationAndRoot(Set.of(
+                objectNode(SpecificationElementType.MANAGED, "Person", Set.of(
+                        stringNode("firstname"),
+                        stringNode("lastname")
+                )),
+                objectNode(SpecificationElementType.MANAGED, "Address", Set.of(
+                        stringNode("city"),
+                        stringNode("state"),
+                        stringNode("country")
+                )),
+                objectNode(SpecificationElementType.MANAGED, "FunkyLongAddress", Set.of(
+                        stringNode("city"),
+                        stringNode("state"),
+                        stringNode("country")
+                ))
+        ));
     }
 
     @Test
     public void thatDeleteAllVersionsWorks() {
         try (Transaction transaction = persistence.createTransaction(false)) {
+            persistence.deleteAllVersions(transaction, namespace, "Address", "newyork", PersistenceDeletePolicy.FAIL_IF_INCOMING_LINKS).join();
+
             ZonedDateTime jan1624 = ZonedDateTime.of(1624, 1, 1, 12, 0, 0, (int) TimeUnit.MILLISECONDS.toNanos(0), ZoneId.of("Etc/UTC"));
             ZonedDateTime jan1626 = ZonedDateTime.of(1626, 1, 1, 12, 0, 0, (int) TimeUnit.MILLISECONDS.toNanos(0), ZoneId.of("Etc/UTC"));
             ZonedDateTime jan1664 = ZonedDateTime.of(1664, 1, 1, 12, 0, 0, (int) TimeUnit.MILLISECONDS.toNanos(0), ZoneId.of("Etc/UTC"));
@@ -98,6 +70,7 @@ public abstract class PersistenceIntegrationTest {
             JsonDocument input2 = toDocument(namespace, "Address", "newyork", createAddress("New York", "NY", "USA"), jan1664);
             persistence.createOrOverwrite(transaction, input2, specification).join();
             Iterator<JsonDocument> iteratorWithDocuments = persistence.readAllVersions(transaction, namespace, "Address", "newyork", null, 100).join().iterator();
+
             assertEquals(size(iteratorWithDocuments), 3);
 
             persistence.deleteAllVersions(transaction, namespace, "Address", "newyork", PersistenceDeletePolicy.FAIL_IF_INCOMING_LINKS).join();
@@ -135,6 +108,27 @@ public abstract class PersistenceIntegrationTest {
     }
 
     @Test
+    public void thatCreateWithSameVersionDoesOverwriteInsteadOfCreatingDuplicateVersions() {
+        try (Transaction transaction = persistence.createTransaction(false)) {
+            persistence.deleteAllVersions(transaction, namespace, "Person", "john", PersistenceDeletePolicy.FAIL_IF_INCOMING_LINKS).join();
+
+            ZonedDateTime oct18 = ZonedDateTime.of(2018, 10, 7, 19, 49, 26, (int) TimeUnit.MILLISECONDS.toNanos(307), ZoneId.of("Etc/UTC"));
+            JsonDocument input = toDocument(namespace, "Person", "john", createPerson("Jimmy", "Smith"), oct18);
+            JsonDocument input2 = toDocument(namespace, "Person", "john", createPerson("John", "Smith"), oct18);
+            CompletableFuture<Void> completableFuture = persistence.createOrOverwrite(transaction, input, specification);
+            completableFuture.join();
+            CompletableFuture<Void> completableFuture2 = persistence.createOrOverwrite(transaction, input2, specification);
+            completableFuture2.join();
+            CompletableFuture<Iterable<JsonDocument>> completableDocumentIterator = persistence.readAllVersions(transaction, namespace, "Person", "john", null, 10);
+            Iterable<JsonDocument> iterable = completableDocumentIterator.join();
+            Iterator<JsonDocument> iterator = iterable.iterator();
+            assertTrue(iterator.hasNext());
+            assertNotNull(iterator.next());
+            assertFalse(iterator.hasNext());
+        }
+    }
+
+    @Test
     public void thatBasicTimeBasedVersioningWorks() {
         try (Transaction transaction = persistence.createTransaction(false)) {
             persistence.deleteAllVersions(transaction, namespace, "Address", "newyork", PersistenceDeletePolicy.FAIL_IF_INCOMING_LINKS).join();
@@ -144,10 +138,12 @@ public abstract class PersistenceIntegrationTest {
             ZonedDateTime jan1664 = ZonedDateTime.of(1664, 1, 1, 12, 0, 0, (int) TimeUnit.MILLISECONDS.toNanos(0), ZoneId.of("Etc/UTC"));
             JsonDocument input0 = toDocument(namespace, "Address", "newyork", createAddress("", "NY", "USA"), jan1624);
             persistence.createOrOverwrite(transaction, input0, specification).join();
-            JsonDocument input1 = toDocument(namespace, "Address", "newyork", createAddress("New Amsterdam", "NY", "USA"), jan1626);
-            persistence.createOrOverwrite(transaction, input1, specification).join();
             JsonDocument input2 = toDocument(namespace, "Address", "newyork", createAddress("New York", "NY", "USA"), jan1664);
             persistence.createOrOverwrite(transaction, input2, specification).join();
+            JsonDocument input1a = toDocument(namespace, "Address", "newyork", createAddress("1a New Amsterdam", "NY", "USA"), jan1626);
+            JsonDocument input1b = toDocument(namespace, "Address", "newyork", createAddress("1b New Amsterdam", "NY", "USA"), jan1626);
+            persistence.createOrOverwrite(transaction, input1a, specification).join();
+            persistence.createOrOverwrite(transaction, input1b, specification).join();
             Iterator<JsonDocument> iterator = persistence.readAllVersions(transaction, namespace, "Address", "newyork", null, 100).join().iterator();
             Set<DocumentKey> actual = new LinkedHashSet<>();
             assertTrue(iterator.hasNext());
@@ -157,7 +153,7 @@ public abstract class PersistenceIntegrationTest {
             assertTrue(iterator.hasNext());
             actual.add(iterator.next().key());
             assertFalse(iterator.hasNext());
-            assertEquals(actual, Set.of(input0.key(), input1.key(), input2.key()));
+            assertEquals(actual, Set.of(input0.key(), input1b.key(), input2.key()));
         }
     }
 
@@ -299,7 +295,9 @@ public abstract class PersistenceIntegrationTest {
 
             Iterator<JsonDocument> iterator = persistence.findAll(transaction, dec11, namespace, "Person", null, 100).join().iterator();
 
+            assertTrue(iterator.hasNext());
             JsonDocument person1 = iterator.next();
+            assertTrue(iterator.hasNext());
             JsonDocument person2 = iterator.next();
             assertFalse(iterator.hasNext());
 
@@ -313,7 +311,7 @@ public abstract class PersistenceIntegrationTest {
         }
     }
 
-    //@@Test
+    @Test
     public void thatBigValueWorks() {
         try (Transaction transaction = persistence.createTransaction(false)) {
             persistence.deleteAllVersions(transaction, namespace, "FunkyLongAddress", "newyork", PersistenceDeletePolicy.FAIL_IF_INCOMING_LINKS).join();
@@ -330,11 +328,16 @@ public abstract class PersistenceIntegrationTest {
             persistence.createOrOverwrite(transaction, toDocument(namespace, "FunkyLongAddress", "newyork", createAddress(bigString, "NY", "USA"), oct18), specification).join();
 
             // Finding funky long address by city
-            int findSize = size(persistence.find(transaction, now, namespace, "FunkyLongAddress", "city", bigString, null, 100).join().iterator());
-            assertEquals(findSize, 1);
+            Iterable<JsonDocument> funkyLongAddress = persistence.find(transaction, now, namespace, "FunkyLongAddress", "$.city", bigString, null, 100).join();
+            Iterator<JsonDocument> iterator = funkyLongAddress.iterator();
+            assertTrue(iterator.hasNext());
+            JsonDocument foundDocument = iterator.next();
+            assertFalse(iterator.hasNext());
+            String foundBigString = foundDocument.document().getString("city");
+            assertEquals(foundBigString, bigString);
 
             // Finding funky long address by city (with non-matching value)
-            int findExpectNoMatchSize = size(persistence.find(transaction, now, namespace, "FunkyLongAddress", "city", bigString + "1", null, 100).join().iterator());
+            int findExpectNoMatchSize = size(persistence.find(transaction, now, namespace, "FunkyLongAddress", "$.city", bigString + "1", null, 100).join().iterator());
             assertEquals(findExpectNoMatchSize, 0);
 
             // Deleting funky long address
