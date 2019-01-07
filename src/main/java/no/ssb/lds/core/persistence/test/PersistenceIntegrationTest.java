@@ -349,6 +349,9 @@ public abstract class PersistenceIntegrationTest {
         JSONObject person = new JSONObject();
         person.put("firstname", firstname);
         person.put("lastname", lastname);
+        person.put("born", 1998);
+        person.put("bornWeightKg", 3.82);
+        person.put("isHuman", true);
         return person;
     }
 
