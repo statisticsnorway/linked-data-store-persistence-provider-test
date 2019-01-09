@@ -40,6 +40,11 @@ public class TestSpecificationElement implements SpecificationElement {
     }
 
     @Override
+    public String getDescription() {
+        return null;
+    }
+
+    @Override
     public SpecificationElement getParent() {
         return parent;
     }
