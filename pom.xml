@@ -4,7 +4,7 @@
 
     <groupId>no.ssb.lds</groupId>
     <artifactId>linked-data-store-persistence-provider-test</artifactId>
-    <version>0.3</version>
+    <version>0.4-SNAPSHOT</version>
     <packaging>jar</packaging>
     <name>LinkedDataStore testing kit persistence-provider</name>
     <description>LinkedDataStore testing kit persistence-provider</description>
@@ -44,7 +44,7 @@
         <connection>scm:git:git://github.com/statisticsnorway/linked-data-store-persistence-provider-test.git</connection>
         <developerConnection>scm:git:git@github.com:statisticsnorway/linked-data-store-persistence-provider-test.git</developerConnection>
         <url>https://github.com/statisticsnorway/linked-data-store-persistence-provider-test/tree/master</url>
-        <tag>v0.3</tag>
+        <tag>HEAD</tag>
     </scm>
 
     <distributionManagement>
