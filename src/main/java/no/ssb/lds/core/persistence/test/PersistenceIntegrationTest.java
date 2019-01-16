@@ -20,6 +20,8 @@ import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.TimeUnit;
 
 import static no.ssb.lds.core.persistence.test.SpecificationBuilder.arrayNode;
+import static no.ssb.lds.core.persistence.test.SpecificationBuilder.booleanNode;
+import static no.ssb.lds.core.persistence.test.SpecificationBuilder.numericNode;
 import static no.ssb.lds.core.persistence.test.SpecificationBuilder.objectNode;
 import static no.ssb.lds.core.persistence.test.SpecificationBuilder.stringNode;
 import static org.testng.Assert.assertEquals;
@@ -42,7 +44,10 @@ public abstract class PersistenceIntegrationTest {
         return SpecificationBuilder.createSpecificationAndRoot(Set.of(
                 objectNode(SpecificationElementType.MANAGED, "Person", Set.of(
                         stringNode("firstname"),
-                        stringNode("lastname")
+                        stringNode("lastname"),
+                        numericNode("born"),
+                        numericNode("bornWeightKg"),
+                        booleanNode("isHuman")
                 )),
                 objectNode(SpecificationElementType.MANAGED, "Address", Set.of(
                         stringNode("city"),
@@ -343,7 +348,7 @@ public abstract class PersistenceIntegrationTest {
             assertEquals(findExpectNoMatchSize, 0);
 
             // Deleting funky long address
-            persistence.delete(transaction, namespace, "FunkyLongAddress", "newyork", oct18, PersistenceDeletePolicy.FAIL_IF_INCOMING_LINKS).join();
+            persistence.deleteAllVersions(transaction, namespace, "FunkyLongAddress", "newyork", PersistenceDeletePolicy.FAIL_IF_INCOMING_LINKS).join();
         }
     }
 
@@ -382,12 +387,13 @@ public abstract class PersistenceIntegrationTest {
         try (Transaction transaction = persistence.createTransaction(false)) {
             ZonedDateTime oct18 = ZonedDateTime.of(2018, 10, 7, 19, 49, 26, (int) TimeUnit.MILLISECONDS.toNanos(307), ZoneId.of("Etc/UTC"));
             JSONObject doc = new JSONObject().put("name", new JSONArray()
-                    .put(new JSONObject().put("first", "John").put("second", "Smith"))
-                    .put(new JSONObject().put("first", "Jane").put("second", "Doe"))
+                    .put(new JSONObject().put("first", "John").put("last", "Smith"))
+                    .put(new JSONObject().put("first", "Jane").put("last", "Doe"))
             );
             JsonDocument input = toDocument(namespace, "People", "1", doc, oct18);
             persistence.createOrOverwrite(transaction, input, specification).join();
             JsonDocument jsonDocument = persistence.read(transaction, oct18, namespace, "People", "1").join();
+            assertNotNull(jsonDocument);
             System.out.format("%s%n", jsonDocument.document().toString());
             assertEquals(jsonDocument.document().toString(), doc.toString());
         }
