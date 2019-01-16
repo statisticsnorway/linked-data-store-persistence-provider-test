@@ -7,6 +7,7 @@ import no.ssb.lds.api.persistence.json.JsonDocument;
 import no.ssb.lds.api.persistence.json.JsonPersistence;
 import no.ssb.lds.api.specification.Specification;
 import no.ssb.lds.api.specification.SpecificationElementType;
+import org.json.JSONArray;
 import org.json.JSONObject;
 import org.testng.annotations.Test;
 
@@ -18,6 +19,7 @@ import java.util.Set;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.TimeUnit;
 
+import static no.ssb.lds.core.persistence.test.SpecificationBuilder.arrayNode;
 import static no.ssb.lds.core.persistence.test.SpecificationBuilder.objectNode;
 import static no.ssb.lds.core.persistence.test.SpecificationBuilder.stringNode;
 import static org.testng.Assert.assertEquals;
@@ -342,6 +344,52 @@ public abstract class PersistenceIntegrationTest {
 
             // Deleting funky long address
             persistence.delete(transaction, namespace, "FunkyLongAddress", "newyork", oct18, PersistenceDeletePolicy.FAIL_IF_INCOMING_LINKS).join();
+        }
+    }
+
+    @Test
+    public void thatSimpleArrayValuesAreIntact() {
+        Specification specification = SpecificationBuilder.createSpecificationAndRoot(Set.of(
+                objectNode(SpecificationElementType.MANAGED, "People", Set.of(
+                        arrayNode("name", stringNode("[]"))
+                ))
+        ));
+        try (Transaction transaction = persistence.createTransaction(false)) {
+            ZonedDateTime oct18 = ZonedDateTime.of(2018, 10, 7, 19, 49, 26, (int) TimeUnit.MILLISECONDS.toNanos(307), ZoneId.of("Etc/UTC"));
+            JSONObject doc = new JSONObject().put("name", new JSONArray()
+                    .put("John Smith")
+                    .put("Jane Doe")
+            );
+            JsonDocument input = toDocument(namespace, "People", "1", doc, oct18);
+            persistence.createOrOverwrite(transaction, input, specification).join();
+            JsonDocument jsonDocument = persistence.read(transaction, oct18, namespace, "People", "1").join();
+            assertEquals(jsonDocument.document().toString(), doc.toString());
+        }
+    }
+
+    @Test
+    public void thatComplexArrayValuesAreIntact() {
+        Specification specification = SpecificationBuilder.createSpecificationAndRoot(Set.of(
+                objectNode(SpecificationElementType.MANAGED, "People", Set.of(
+                        arrayNode("name",
+                                objectNode(SpecificationElementType.EMBEDDED, "[]", Set.of(
+                                        stringNode("first"),
+                                        stringNode("last")
+                                ))
+                        )
+                ))
+        ));
+        try (Transaction transaction = persistence.createTransaction(false)) {
+            ZonedDateTime oct18 = ZonedDateTime.of(2018, 10, 7, 19, 49, 26, (int) TimeUnit.MILLISECONDS.toNanos(307), ZoneId.of("Etc/UTC"));
+            JSONObject doc = new JSONObject().put("name", new JSONArray()
+                    .put(new JSONObject().put("first", "John").put("second", "Smith"))
+                    .put(new JSONObject().put("first", "Jane").put("second", "Doe"))
+            );
+            JsonDocument input = toDocument(namespace, "People", "1", doc, oct18);
+            persistence.createOrOverwrite(transaction, input, specification).join();
+            JsonDocument jsonDocument = persistence.read(transaction, oct18, namespace, "People", "1").join();
+            System.out.format("%s%n", jsonDocument.document().toString());
+            assertEquals(jsonDocument.document().toString(), doc.toString());
         }
     }
 
