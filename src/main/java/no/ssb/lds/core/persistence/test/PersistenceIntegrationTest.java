@@ -9,10 +9,12 @@ import no.ssb.lds.api.specification.Specification;
 import no.ssb.lds.api.specification.SpecificationElementType;
 import org.json.JSONArray;
 import org.json.JSONObject;
+import org.testng.Assert;
 import org.testng.annotations.Test;
 
 import java.time.ZoneId;
 import java.time.ZonedDateTime;
+import java.time.temporal.ChronoUnit;
 import java.util.Iterator;
 import java.util.LinkedHashSet;
 import java.util.Set;
@@ -204,14 +206,86 @@ public abstract class PersistenceIntegrationTest {
             ZonedDateTime nov13 = ZonedDateTime.of(2013, 11, 5, 17, 47, 24, (int) TimeUnit.MILLISECONDS.toNanos(305), ZoneId.of("Etc/UTC"));
             ZonedDateTime sep18 = ZonedDateTime.of(2018, 9, 6, 18, 48, 25, (int) TimeUnit.MILLISECONDS.toNanos(306), ZoneId.of("Etc/UTC"));
             ZonedDateTime oct18 = ZonedDateTime.of(2018, 10, 7, 19, 49, 26, (int) TimeUnit.MILLISECONDS.toNanos(307), ZoneId.of("Etc/UTC"));
-            persistence.createOrOverwrite(transaction, toDocument(namespace, "Person", "john", createPerson("John", "Smith"), aug92), specification).join();
-            persistence.createOrOverwrite(transaction, toDocument(namespace, "Person", "john", createPerson("James", "Smith"), nov13), specification).join();
-            persistence.createOrOverwrite(transaction, toDocument(namespace, "Person", "john", createPerson("John", "Smith"), oct18), specification).join();
+            JsonDocument expected2 = toDocument(namespace, "Person", "john", createPerson("John", "Smith"), aug92);
+            persistence.createOrOverwrite(transaction, expected2, specification).join();
+            JsonDocument expected1 = toDocument(namespace, "Person", "john", createPerson("James", "Smith"), nov13);
+            persistence.createOrOverwrite(transaction, expected1, specification).join();
+            persistence.createOrOverwrite(transaction, toDocument(namespace, "Person", "john", createPerson("Jones", "Smith"), oct18), specification).join();
 
-            assertEquals(size(persistence.readVersions(transaction, feb10, sep18, namespace, "Person", "john", null, 100).join().iterator()), 2);
+            Iterator<JsonDocument> iterator = persistence.readVersions(transaction, feb10.minusYears(1), sep18.plusHours(1), namespace, "Person", "john", null, 100).join().iterator();
+            JsonDocument doc1 = iterator.next();
+            JsonDocument doc2 = iterator.next();
+            assertFalse(iterator.hasNext(), "expected to contain exactly 2 elements");
+            assertEquals(expected1.document().toString(2), doc1.document().toString(2));
+            assertEquals(expected2.document().toString(2), doc2.document().toString(2));
         }
     }
 
+    @Test
+    public void thatReadVersionsInRangeWhenOnlyOneVersionExistsWorks() {
+        try (Transaction transaction = persistence.createTransaction(false)) {
+            persistence.deleteAllVersions(transaction, namespace, "Person", "john", PersistenceDeletePolicy.FAIL_IF_INCOMING_LINKS).join();
+
+            ZonedDateTime nov13 = ZonedDateTime.of(2013, 11, 5, 17, 47, 24, (int) TimeUnit.MILLISECONDS.toNanos(305), ZoneId.of("Etc/UTC"));
+            JsonDocument expected1 = toDocument(namespace, "Person", "john", createPerson("John", "Smith"), nov13);
+            persistence.createOrOverwrite(transaction, expected1, specification).join();
+
+            Iterator<JsonDocument> iterator = persistence.readVersions(transaction, nov13.minusYears(1), nov13.plusYears(1), namespace, "Person", "john", null, 100).join().iterator();
+            JsonDocument doc1 = iterator.next();
+            assertFalse(iterator.hasNext(), "expected to contain exactly 1 document");
+            assertEquals(expected1.document().toString(2), doc1.document().toString(2));
+        }
+    }
+
+    @Test
+    public void thatReadVersionsWithFromAndToCornerCasesWorks() {
+        try (Transaction transaction = persistence.createTransaction(false)) {
+            persistence.deleteAllVersions(transaction, namespace, "Person", "john", PersistenceDeletePolicy.FAIL_IF_INCOMING_LINKS).join();
+
+            ZonedDateTime nov13 = ZonedDateTime.of(2013, 11, 5, 17, 47, 24, (int) TimeUnit.MILLISECONDS.toNanos(305), ZoneId.of("Etc/UTC"));
+            JsonDocument expected1 = toDocument(namespace, "Person", "john", createPerson("John", "Smith"), nov13);
+            persistence.createOrOverwrite(transaction, expected1, specification).join();
+
+            {
+                // case 1, from == version and to == version. Expect no document because to argument uses exclusive syntax
+                Iterator<JsonDocument> iterator = persistence.readVersions(transaction, nov13, nov13, namespace, "Person", "john", null, 100).join().iterator();
+                assertEquals(size(iterator), 0);
+            }
+            {
+                // case 2, from == version and to == tick(version). Expect one document. This is the tightest range possible without yielding empty result.
+                Iterator<JsonDocument> iterator = persistence.readVersions(transaction, nov13, nov13.plus(1, ChronoUnit.MILLIS), namespace, "Person", "john", null, 100).join().iterator();
+                assertEquals(size(iterator), 1);
+            }
+            {
+                // case 3, from == version and to == leap(version). Expect one document. To is a whole year after version.
+                Iterator<JsonDocument> iterator = persistence.readVersions(transaction, nov13, nov13.plusYears(1), namespace, "Person", "john", null, 100).join().iterator();
+                assertEquals(size(iterator), 1);
+            }
+            {
+                // case 4, from == backtick(version) and to == version. Expect no document because to argument uses exclusive syntax
+                Iterator<JsonDocument> iterator = persistence.readVersions(transaction, nov13.minus(1, ChronoUnit.MILLIS), nov13, namespace, "Person", "john", null, 100).join().iterator();
+                assertEquals(size(iterator), 0);
+            }
+            {
+                // case 5, from == backleap(version) and to == backtick(version). Expect no document because to argument is less than version.
+                Iterator<JsonDocument> iterator = persistence.readVersions(transaction, nov13.minusYears(1), nov13.minus(1, ChronoUnit.MILLIS), namespace, "Person", "john", null, 100).join().iterator();
+                assertEquals(size(iterator), 0);
+            }
+            {
+                // case 5, from == backleap(version) and to == leap(version). Expect one document in middle of range.
+                Iterator<JsonDocument> iterator = persistence.readVersions(transaction, nov13.minusYears(1), nov13.plusYears(1), namespace, "Person", "john", null, 100).join().iterator();
+                assertEquals(size(iterator), 1);
+            }
+            {
+                // case 6, from == leap(version) and to == backleap(version). Expect exception due to negative range.
+                try {
+                    persistence.readVersions(transaction, nov13.plusYears(1), nov13.minusYears(1), namespace, "Person", "john", null, 100).join().iterator();
+                    Assert.fail("Expected IllegalArgumentException");
+                } catch (IllegalArgumentException e) {
+                }
+            }
+        }
+    }
 
     @Test
     public void thatReadAllVersionsWorks() {
@@ -394,7 +468,7 @@ public abstract class PersistenceIntegrationTest {
             persistence.createOrOverwrite(transaction, input, specification).join();
             JsonDocument jsonDocument = persistence.read(transaction, oct18, namespace, "People", "1").join();
             assertNotNull(jsonDocument);
-            System.out.format("%s%n", jsonDocument.document().toString());
+            //System.out.format("%s%n", jsonDocument.document().toString());
             assertEquals(jsonDocument.document().toString(), doc.toString());
         }
     }
