@@ -1,6 +1,5 @@
 package no.ssb.lds.core.persistence.neo4j;
 
-import no.ssb.lds.api.persistence.json.JsonPersistence;
 import no.ssb.lds.core.persistence.test.PersistenceIntegrationTest;
 import org.testng.annotations.AfterClass;
 import org.testng.annotations.BeforeClass;
@@ -17,7 +16,7 @@ public class Neo4jPersistenceIntegrationTest extends PersistenceIntegrationTest 
     @BeforeClass
     public void setup() {
 
-        JsonPersistence initialize = new Neo4jInitializer().initialize(namespace,
+        persistence = new Neo4jInitializer().initialize(namespace,
                 Map.of("neo4j.driver.url", "bolt://localhost:7687",
                         "neo4j.driver.username", "neo4j",
                         "neo4j.driver.password", "PasSW0rd",

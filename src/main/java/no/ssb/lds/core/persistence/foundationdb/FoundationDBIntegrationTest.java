@@ -18,14 +18,12 @@ public class FoundationDBIntegrationTest extends PersistenceIntegrationTest {
 
     @BeforeClass
     public void setup() {
-        JsonPersistence fdbJsonPersistence = new FoundationDBInitializer().initialize(
+        this.persistence = new FoundationDBInitializer().initialize(
                 namespace,
                 Map.of("foundationdb.directory.node-prefix.hex", "3A",
                         "foundationdb.directory.content-prefix.hex", "3B",
                         "persistence.fragment.capacity", String.valueOf(8192)),
                 Set.of("Person", "Address", "FunkyLongAddress"));
-        this.persistence = new RxJsonPersistenceBridge(
-                new RxPersistenceBridge(fdbJsonPersistence.getPersistence()), 8192);
     }
 
     @AfterClass
