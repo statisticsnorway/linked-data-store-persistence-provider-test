@@ -1,5 +1,8 @@
 package no.ssb.lds.core.persistence.foundationdb;
 
+import no.ssb.lds.api.persistence.json.JsonPersistence;
+import no.ssb.lds.api.persistence.reactivex.RxJsonPersistenceBridge;
+import no.ssb.lds.api.persistence.reactivex.RxPersistenceBridge;
 import no.ssb.lds.core.persistence.test.PersistenceIntegrationTest;
 import org.testng.annotations.AfterClass;
 import org.testng.annotations.BeforeClass;
@@ -15,12 +18,14 @@ public class FoundationDBIntegrationTest extends PersistenceIntegrationTest {
 
     @BeforeClass
     public void setup() {
-        persistence = new FoundationDBInitializer().initialize(
+        JsonPersistence fdbJsonPersistence = new FoundationDBInitializer().initialize(
                 namespace,
                 Map.of("foundationdb.directory.node-prefix.hex", "3A",
                         "foundationdb.directory.content-prefix.hex", "3B",
-                        "persistence.fragment.capacity", String.valueOf(8 * 1024)),
+                        "persistence.fragment.capacity", String.valueOf(8192)),
                 Set.of("Person", "Address", "FunkyLongAddress"));
+        this.persistence = new RxJsonPersistenceBridge(
+                new RxPersistenceBridge(fdbJsonPersistence.getPersistence()), 8192);
     }
 
     @AfterClass
