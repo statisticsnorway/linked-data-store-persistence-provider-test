@@ -4,7 +4,6 @@ import no.ssb.lds.api.persistence.DocumentKey;
 import no.ssb.lds.api.persistence.PersistenceDeletePolicy;
 import no.ssb.lds.api.persistence.Transaction;
 import no.ssb.lds.api.persistence.json.JsonDocument;
-import no.ssb.lds.api.persistence.json.JsonPersistence;
 import no.ssb.lds.api.persistence.reactivex.Range;
 import no.ssb.lds.api.persistence.reactivex.RxJsonPersistence;
 import no.ssb.lds.api.specification.Specification;
@@ -18,7 +17,6 @@ import java.time.ZonedDateTime;
 import java.util.Iterator;
 import java.util.LinkedHashSet;
 import java.util.Set;
-import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.TimeUnit;
 
 import static no.ssb.lds.core.persistence.test.SpecificationBuilder.arrayNode;
@@ -281,7 +279,6 @@ public abstract class PersistenceIntegrationTest {
             }
         }
     }
-
 
     @Test
     public void thatFindAllWorks() {
