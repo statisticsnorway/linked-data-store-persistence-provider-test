@@ -1,5 +1,6 @@
 package no.ssb.lds.core.persistence.test;
 
+import io.reactivex.Flowable;
 import no.ssb.lds.api.persistence.DocumentKey;
 import no.ssb.lds.api.persistence.PersistenceDeletePolicy;
 import no.ssb.lds.api.persistence.Transaction;
@@ -19,11 +20,14 @@ import java.util.LinkedHashSet;
 import java.util.Set;
 import java.util.concurrent.TimeUnit;
 
+import static java.lang.String.*;
+import static java.time.ZonedDateTime.*;
 import static no.ssb.lds.core.persistence.test.SpecificationBuilder.arrayNode;
 import static no.ssb.lds.core.persistence.test.SpecificationBuilder.booleanNode;
 import static no.ssb.lds.core.persistence.test.SpecificationBuilder.numericNode;
 import static no.ssb.lds.core.persistence.test.SpecificationBuilder.objectNode;
 import static no.ssb.lds.core.persistence.test.SpecificationBuilder.stringNode;
+import static org.assertj.core.api.Assertions.assertThat;
 import static org.testng.Assert.assertEquals;
 import static org.testng.Assert.assertFalse;
 import static org.testng.Assert.assertNotNull;
@@ -39,6 +43,24 @@ public abstract class PersistenceIntegrationTest {
     protected PersistenceIntegrationTest(String namespace) {
         this.namespace = namespace;
         this.specification = buildSpecification();
+    }
+
+    protected static JSONObject createPerson(String firstname, String lastname) {
+        JSONObject person = new JSONObject();
+        person.put("firstname", firstname);
+        person.put("lastname", lastname);
+        person.put("born", 1998);
+        person.put("bornWeightKg", 3.82);
+        person.put("isHuman", true);
+        return person;
+    }
+
+    protected static JSONObject createAddress(String city, String state, String country) {
+        JSONObject address = new JSONObject();
+        address.put("city", city);
+        address.put("state", state);
+        address.put("country", country);
+        return address;
     }
 
     protected Specification buildSpecification() {
@@ -63,14 +85,318 @@ public abstract class PersistenceIntegrationTest {
         ));
     }
 
+    private JsonDocument createPerson(String id, ZonedDateTime timestamp) {
+        return toDocument(namespace, "Person", id, createPerson("John (" + id + ")", "Smith ("+ timestamp +")"), timestamp);
+    }
+
+    private JsonDocument createPerson(String id) {
+        return createPerson(id, parse("2000-01-01T00:00:00.000Z"));
+    }
+
+    private JsonDocument createPersonVersion(ZonedDateTime timestamp) {
+        return toDocument(namespace, "Person", "person00", createPerson("John", "Smith ("+ timestamp +")"), timestamp);
+    }
+
+    @Test
+    public void testHasNextAndHasPrevious() {
+        ZonedDateTime timestamp = parse("2000-01-01T00:00:00.000Z");
+        try (Transaction tx = persistence.createTransaction(false)) {
+            try {
+
+                // Create one before.
+                persistence.createOrOverwrite(tx, createPerson("person01", timestamp), specification).blockingAwait();
+
+                assertThat(persistence.hasNext(tx, timestamp, namespace, "Person", "person01").blockingGet())
+                    .as("hasNext() with empty database")
+                    .isFalse();
+
+                assertThat(persistence.hasPrevious(tx, timestamp, namespace, "Person", "person01").blockingGet())
+                        .as("hasNext() with empty database")
+                        .isFalse();
+
+                // Create one before.
+                persistence.createOrOverwrite(tx, createPerson("person00", timestamp), specification).blockingAwait();
+                assertThat(persistence.hasPrevious(tx, timestamp, namespace, "Person", "person01").blockingGet())
+                        .as("hasNext() with one before")
+                        .isTrue();
+
+                // Create one after.
+                persistence.createOrOverwrite(tx, createPerson("person02", timestamp), specification).blockingAwait();
+                assertThat(persistence.hasNext(tx, timestamp, namespace, "Person", "person01").blockingGet())
+                        .as("hasNext() with one after")
+                        .isTrue();
+
+
+
+
+            } finally {
+                // Clean up.
+                persistence.deleteAllDocumentVersions(tx, namespace, "Person", "person00",
+                        PersistenceDeletePolicy.CASCADE_DELETE_ALL_INCOMING_LINKS_AND_NODES).blockingAwait();
+                persistence.deleteAllDocumentVersions(tx, namespace, "Person", "person01",
+                        PersistenceDeletePolicy.CASCADE_DELETE_ALL_INCOMING_LINKS_AND_NODES).blockingAwait();
+                persistence.deleteAllDocumentVersions(tx, namespace, "Person", "person02",
+                        PersistenceDeletePolicy.CASCADE_DELETE_ALL_INCOMING_LINKS_AND_NODES).blockingAwait();
+            }
+        }
+
+    }
+
+    @Test
+    public void testReadDocuments() {
+        // Create 12 persons.
+        ZonedDateTime timestamp = parse("2000-01-01T00:00:00.000Z");
+        Flowable<JsonDocument> persons = Flowable.range(0, 12)
+                .map(i -> format("person%02d", i))
+                .map(id -> createPerson(id, timestamp));
+
+
+        try (Transaction tx = persistence.createTransaction(false)) {
+            try {
+
+                // Create data.
+                persons.flatMapCompletable(document -> persistence.createOrOverwrite(tx, document, specification)).blockingAwait();
+
+
+                Flowable<JsonDocument> allPersons = persistence.readDocuments(tx, timestamp, namespace, "Person", Range.unbounded());
+                assertThat(allPersons.map(JsonDocument::document).blockingIterable())
+                        .as("json documents returned by readDocuments(..., unbounded)")
+                        .usingElementComparator((o1, o2) -> o1.similar(o2) ? 0 : -1)
+                        .containsExactlyInAnyOrderElementsOf(persons.map(JsonDocument::document).blockingIterable());
+
+                Flowable<JsonDocument> firstThreePersons = persistence.readDocuments(tx, timestamp, namespace, "Person", Range.first(3));
+                assertThat(firstThreePersons.map(JsonDocument::document).blockingIterable())
+                        .as("json documents returned by readDocuments(..., first(3))")
+                        .usingElementComparator((o1, o2) -> o1.similar(o2) ? 0 : -1)
+                        .containsExactly(
+                                createPerson("person00", timestamp).document(),
+                                createPerson("person01", timestamp).document(),
+                                createPerson("person02", timestamp).document()
+                        );
+
+                Flowable<JsonDocument> firstThreeAfter = persistence.readDocuments(tx, timestamp, namespace, "Person", Range.firstAfter(3, "person03"));
+                assertThat(firstThreeAfter.map(JsonDocument::document).blockingIterable())
+                        .as("json documents returned by readDocuments(..., firstAfter(3))")
+                        .usingElementComparator((o1, o2) -> o1.similar(o2) ? 0 : -1)
+                        .containsExactly(
+                                createPerson("person04", timestamp).document(),
+                                createPerson("person05", timestamp).document(),
+                                createPerson("person06", timestamp).document()
+                        );
+
+                Flowable<JsonDocument> firstThreeBetween = persistence.readDocuments(tx, timestamp, namespace, "Person", Range.firstBetween(2, "person06", "person10"));
+                assertThat(firstThreeBetween.map(JsonDocument::document).blockingIterable())
+                        .as("json documents returned by readDocuments(..., firstBetween(2, \"person05\", \"person10\"))")
+                        .usingElementComparator((o1, o2) -> o1.similar(o2) ? 0 : -1)
+                        .containsExactly(
+                                createPerson("person07", timestamp).document(),
+                                createPerson("person08", timestamp).document()
+                        );
+
+                Flowable<JsonDocument> firstFourBetween = persistence.readDocuments(tx, timestamp, namespace, "Person", Range.firstBetween(4, "person06", "person10"));
+                assertThat(firstFourBetween.map(JsonDocument::document).blockingIterable())
+                        .as("json documents returned by readDocuments(..., firstBetween(4, \"person06\", \"person10\"))")
+                        .usingElementComparator((o1, o2) -> o1.similar(o2) ? 0 : -1)
+                        .containsExactly(
+                                createPerson("person07", timestamp).document(),
+                                createPerson("person08", timestamp).document(),
+                                createPerson("person09", timestamp).document()
+                        );
+
+                Flowable<JsonDocument> lastThree = persistence.readDocuments(tx, timestamp, namespace, "Person", Range.last(3));
+                assertThat(lastThree.map(JsonDocument::document).blockingIterable())
+                        .as("json documents returned by readDocuments(..., last(3))")
+                        .usingElementComparator((o1, o2) -> o1.similar(o2) ? 0 : -1)
+                        .containsExactly(
+                                createPerson("person11", timestamp).document(),
+                                createPerson("person10", timestamp).document(),
+                                createPerson("person09", timestamp).document()
+                        );
+
+                Flowable<JsonDocument> lastThreeBefore = persistence.readDocuments(tx, timestamp, namespace, "Person", Range.lastBefore(3, "person10"));
+                assertThat(lastThreeBefore.map(JsonDocument::document).blockingIterable())
+                        .as("json documents returned by readDocuments(..., lastBefore(3, \"person10\"))")
+                        .usingElementComparator((o1, o2) -> o1.similar(o2) ? 0 : -1)
+                        .containsExactly(
+                                createPerson("person09", timestamp).document(),
+                                createPerson("person08", timestamp).document(),
+                                createPerson("person07", timestamp).document()
+                        );
+
+                Flowable<JsonDocument> lastTwoBetween = persistence.readDocuments(tx, timestamp, namespace, "Person", Range.lastBetween(2, "person06", "person10"));
+                assertThat(lastTwoBetween.map(JsonDocument::document).blockingIterable())
+                        .as("json documents returned by readDocuments(..., lastBetween(2, \"person06\", \"person10\"))")
+                        .usingElementComparator((o1, o2) -> o1.similar(o2) ? 0 : -1)
+                        .containsExactly(
+                                createPerson("person09", timestamp).document(),
+                                createPerson("person08", timestamp).document()
+                        );
+
+                Flowable<JsonDocument> lastFourBetween = persistence.readDocuments(tx, timestamp, namespace, "Person", Range.lastBetween(4, "person06", "person10"));
+                assertThat(lastFourBetween.map(JsonDocument::document).blockingIterable())
+                        .as("json documents returned by readDocuments(..., lastBetween(4, \"person06\", \"person10\"))")
+                        .usingElementComparator((o1, o2) -> o1.similar(o2) ? 0 : -1)
+                        .containsExactly(
+                                createPerson("person09", timestamp).document(),
+                                createPerson("person08", timestamp).document(),
+                                createPerson("person07", timestamp).document()
+                        );
+
+
+            } finally {
+                // Clean up.
+                persons.flatMapCompletable(document ->
+                        persistence.deleteAllDocumentVersions(tx, namespace, "Person", document.key().id(),
+                                PersistenceDeletePolicy.CASCADE_DELETE_ALL_INCOMING_LINKS_AND_NODES)
+                ).blockingAwait();
+            }
+        }
+    }
+
+    @Test
+    public void testReadDocumentVersions() {
+        // Create 12 version of the same person.
+        ZonedDateTime timestamp = parse("2000-01-01T00:00:00.000Z");
+        Flowable<JsonDocument> persons = Flowable.range(1, 12)
+                .map(month -> timestamp.withMonth(month))
+                .map(datetime -> createPersonVersion(datetime));
+
+
+        try (Transaction tx = persistence.createTransaction(false)) {
+            try {
+
+                // Create data.
+                persons.flatMapCompletable(document -> persistence.createOrOverwrite(tx, document, specification)).blockingAwait();
+
+
+                Flowable<JsonDocument> allPersons = persistence.readDocumentVersions(
+                        tx, namespace, "Person", "person00",
+                        Range.unbounded()
+                );
+                assertThat(allPersons.map(JsonDocument::document).blockingIterable())
+                        .as("json documents returned by readDocuments(..., unbounded)")
+                        .usingElementComparator((o1, o2) -> o1.similar(o2) ? 0 : -1)
+                        .containsExactlyInAnyOrderElementsOf(persons.map(JsonDocument::document).blockingIterable());
+
+                Flowable<JsonDocument> firstThreePersons = persistence.readDocumentVersions(
+                        tx, namespace, "Person", "person00",
+                        Range.first(3)
+                );
+                assertThat(firstThreePersons.map(JsonDocument::document).blockingIterable())
+                        .as("json documents returned by readDocuments(..., first(3))")
+                        .usingElementComparator((o1, o2) -> o1.similar(o2) ? 0 : -1)
+                        .containsExactly(
+                                createPersonVersion(timestamp.withMonth(1)).document(),
+                                createPersonVersion(timestamp.withMonth(2)).document(),
+                                createPersonVersion(timestamp.withMonth(3)).document()
+                        );
+
+                Flowable<JsonDocument> firstThreeAfter = persistence.readDocumentVersions(
+                        tx, namespace, "Person", "person00",
+                        Range.firstAfter(3, timestamp.withMonth(3))
+                );
+                assertThat(firstThreeAfter.map(JsonDocument::document).blockingIterable())
+                        .as("json documents returned by readDocuments(..., firstAfter(3, 2000-03...))")
+                        .usingElementComparator((o1, o2) -> o1.similar(o2) ? 0 : -1)
+                        .containsExactly(
+                                createPersonVersion(timestamp.withMonth(4)).document(),
+                                createPersonVersion(timestamp.withMonth(5)).document(),
+                                createPersonVersion(timestamp.withMonth(6)).document()
+                        );
+
+                Flowable<JsonDocument> firstThreeBetween = persistence.readDocumentVersions(
+                        tx, namespace, "Person", "person00",
+                        Range.firstBetween(2, timestamp.withMonth(6), timestamp.withMonth(10))
+                );
+                assertThat(firstThreeBetween.map(JsonDocument::document).blockingIterable())
+                        .as("json documents returned by readDocuments(..., firstBetween(2, \"person05\", \"person10\"))")
+                        .usingElementComparator((o1, o2) -> o1.similar(o2) ? 0 : -1)
+                        .containsExactly(
+                                createPersonVersion(timestamp.withMonth(7)).document(),
+                                createPersonVersion(timestamp.withMonth(8)).document()
+                        );
+
+                Flowable<JsonDocument> firstFourBetween = persistence.readDocumentVersions(
+                        tx, namespace, "Person", "person00",
+                        Range.firstBetween(4, timestamp.withMonth(6), timestamp.withMonth(10))
+                );
+                assertThat(firstFourBetween.map(JsonDocument::document).blockingIterable())
+                        .as("json documents returned by readDocuments(..., firstBetween(4, 2000-06..., 2000-10...))")
+                        .usingElementComparator((o1, o2) -> o1.similar(o2) ? 0 : -1)
+                        .containsExactly(
+                                createPersonVersion(timestamp.withMonth(7)).document(),
+                                createPersonVersion(timestamp.withMonth(8)).document(),
+                                createPersonVersion(timestamp.withMonth(9)).document()
+                        );
+
+                Flowable<JsonDocument> lastThree = persistence.readDocumentVersions(
+                        tx, namespace, "Person", "person00",
+                        Range.last(3)
+                );
+                assertThat(lastThree.map(JsonDocument::document).blockingIterable())
+                        .as("json documents returned by readDocuments(..., last(3))")
+                        .usingElementComparator((o1, o2) -> o1.similar(o2) ? 0 : -1)
+                        .containsExactly(
+                                createPersonVersion(timestamp.withMonth(12)).document(),
+                                createPersonVersion(timestamp.withMonth(11)).document(),
+                                createPersonVersion(timestamp.withMonth(10)).document()
+                        );
+
+                Flowable<JsonDocument> lastThreeBefore = persistence.readDocumentVersions(
+                        tx, namespace, "Person", "person00",
+                        Range.lastBefore(3, timestamp.withMonth(10))
+                );
+                assertThat(lastThreeBefore.map(JsonDocument::document).blockingIterable())
+                        .as("json documents returned by readDocuments(..., lastBefore(3, \"person10\"))")
+                        .usingElementComparator((o1, o2) -> o1.similar(o2) ? 0 : -1)
+                        .containsExactly(
+                                createPersonVersion(timestamp.withMonth(9)).document(),
+                                createPersonVersion(timestamp.withMonth(8)).document(),
+                                createPersonVersion(timestamp.withMonth(7)).document()
+                        );
+
+                Flowable<JsonDocument> lastTwoBetween = persistence.readDocumentVersions(
+                        tx, namespace, "Person", "person00",
+                        Range.lastBetween(2, timestamp.withMonth(6), timestamp.withMonth(10)));
+                assertThat(lastTwoBetween.map(JsonDocument::document).blockingIterable())
+                        .as("json documents returned by readDocuments(..., lastBetween(2, \"person06\", \"person10\"))")
+                        .usingElementComparator((o1, o2) -> o1.similar(o2) ? 0 : -1)
+                        .containsExactly(
+                                createPersonVersion(timestamp.withMonth(9)).document(),
+                                createPersonVersion(timestamp.withMonth(8)).document()
+                        );
+
+                Flowable<JsonDocument> lastFourBetween = persistence.readDocumentVersions(
+                        tx, namespace, "Person", "person00",
+                        Range.lastBetween(4, timestamp.withMonth(6), timestamp.withMonth(10)));
+                assertThat(lastFourBetween.map(JsonDocument::document).blockingIterable())
+                        .as("json documents returned by readDocuments(..., lastBetween(4, \"person06\", \"person10\"))")
+                        .usingElementComparator((o1, o2) -> o1.similar(o2) ? 0 : -1)
+                        .containsExactly(
+                                createPersonVersion(timestamp.withMonth(9)).document(),
+                                createPersonVersion(timestamp.withMonth(8)).document(),
+                                createPersonVersion(timestamp.withMonth(7)).document()
+                        );
+
+
+            } finally {
+                // Clean up.
+                persons.flatMapCompletable(document ->
+                        persistence.deleteAllDocumentVersions(tx, namespace, "Person", document.key().id(),
+                                PersistenceDeletePolicy.CASCADE_DELETE_ALL_INCOMING_LINKS_AND_NODES)
+                ).blockingAwait();
+            }
+        }
+    }
+
     @Test
     public void thatDeleteAllVersionsWorks() {
         try (Transaction transaction = persistence.createTransaction(false)) {
             persistence.deleteAllDocumentVersions(transaction, namespace, "Address", "newyork", PersistenceDeletePolicy.FAIL_IF_INCOMING_LINKS).blockingAwait();
 
-            ZonedDateTime jan1624 = ZonedDateTime.of(1624, 1, 1, 12, 0, 0, (int) TimeUnit.MILLISECONDS.toNanos(0), ZoneId.of("Etc/UTC"));
-            ZonedDateTime jan1626 = ZonedDateTime.of(1626, 1, 1, 12, 0, 0, (int) TimeUnit.MILLISECONDS.toNanos(0), ZoneId.of("Etc/UTC"));
-            ZonedDateTime jan1664 = ZonedDateTime.of(1664, 1, 1, 12, 0, 0, (int) TimeUnit.MILLISECONDS.toNanos(0), ZoneId.of("Etc/UTC"));
+            ZonedDateTime jan1624 = of(1624, 1, 1, 12, 0, 0, (int) TimeUnit.MILLISECONDS.toNanos(0), ZoneId.of("Etc/UTC"));
+            ZonedDateTime jan1626 = of(1626, 1, 1, 12, 0, 0, (int) TimeUnit.MILLISECONDS.toNanos(0), ZoneId.of("Etc/UTC"));
+            ZonedDateTime jan1664 = of(1664, 1, 1, 12, 0, 0, (int) TimeUnit.MILLISECONDS.toNanos(0), ZoneId.of("Etc/UTC"));
             JsonDocument input0 = toDocument(namespace, "Address", "newyork", createAddress("", "NY", "USA"), jan1624);
             persistence.createOrOverwrite(transaction, input0, specification).blockingAwait();
             JsonDocument input1 = toDocument(namespace, "Address", "newyork", createAddress("New Amsterdam", "NY", "USA"), jan1626);
@@ -103,7 +429,7 @@ public abstract class PersistenceIntegrationTest {
         try (Transaction transaction = persistence.createTransaction(false)) {
             persistence.deleteAllDocumentVersions(transaction, namespace, "Person", "john", PersistenceDeletePolicy.FAIL_IF_INCOMING_LINKS).blockingAwait();
 
-            ZonedDateTime oct18 = ZonedDateTime.of(2018, 10, 7, 19, 49, 26, (int) TimeUnit.MILLISECONDS.toNanos(307), ZoneId.of("Etc/UTC"));
+            ZonedDateTime oct18 = of(2018, 10, 7, 19, 49, 26, (int) TimeUnit.MILLISECONDS.toNanos(307), ZoneId.of("Etc/UTC"));
             JsonDocument input = toDocument(namespace, "Person", "john", createPerson("John", "Smith"), oct18);
             persistence.createOrOverwrite(transaction, input, specification).blockingAwait();
 
@@ -119,7 +445,7 @@ public abstract class PersistenceIntegrationTest {
         try (Transaction transaction = persistence.createTransaction(false)) {
             persistence.deleteAllDocumentVersions(transaction, namespace, "Person", "john", PersistenceDeletePolicy.FAIL_IF_INCOMING_LINKS).blockingAwait();
 
-            ZonedDateTime oct18 = ZonedDateTime.of(2018, 10, 7, 19, 49, 26, (int) TimeUnit.MILLISECONDS.toNanos(307), ZoneId.of("Etc/UTC"));
+            ZonedDateTime oct18 = of(2018, 10, 7, 19, 49, 26, (int) TimeUnit.MILLISECONDS.toNanos(307), ZoneId.of("Etc/UTC"));
             JsonDocument input = toDocument(namespace, "Person", "john", createPerson("Jimmy", "Smith"), oct18);
             JsonDocument input2 = toDocument(namespace, "Person", "john", createPerson("John", "Smith"), oct18);
             persistence.createOrOverwrite(transaction, input, specification).blockingAwait();
@@ -139,9 +465,9 @@ public abstract class PersistenceIntegrationTest {
         try (Transaction transaction = persistence.createTransaction(false)) {
             persistence.deleteAllDocumentVersions(transaction, namespace, "Address", "newyork", PersistenceDeletePolicy.FAIL_IF_INCOMING_LINKS).blockingAwait();
 
-            ZonedDateTime jan1624 = ZonedDateTime.of(1624, 1, 1, 12, 0, 0, (int) TimeUnit.MILLISECONDS.toNanos(0), ZoneId.of("Etc/UTC"));
-            ZonedDateTime jan1626 = ZonedDateTime.of(1626, 1, 1, 12, 0, 0, (int) TimeUnit.MILLISECONDS.toNanos(0), ZoneId.of("Etc/UTC"));
-            ZonedDateTime jan1664 = ZonedDateTime.of(1664, 1, 1, 12, 0, 0, (int) TimeUnit.MILLISECONDS.toNanos(0), ZoneId.of("Etc/UTC"));
+            ZonedDateTime jan1624 = of(1624, 1, 1, 12, 0, 0, (int) TimeUnit.MILLISECONDS.toNanos(0), ZoneId.of("Etc/UTC"));
+            ZonedDateTime jan1626 = of(1626, 1, 1, 12, 0, 0, (int) TimeUnit.MILLISECONDS.toNanos(0), ZoneId.of("Etc/UTC"));
+            ZonedDateTime jan1664 = of(1664, 1, 1, 12, 0, 0, (int) TimeUnit.MILLISECONDS.toNanos(0), ZoneId.of("Etc/UTC"));
             JsonDocument input0 = toDocument(namespace, "Address", "newyork", createAddress("", "NY", "USA"), jan1624);
             persistence.createOrOverwrite(transaction, input0, specification).blockingAwait();
             JsonDocument input2 = toDocument(namespace, "Address", "newyork", createAddress("New York", "NY", "USA"), jan1664);
@@ -169,10 +495,10 @@ public abstract class PersistenceIntegrationTest {
         try (Transaction transaction = persistence.createTransaction(false)) {
             persistence.deleteAllDocumentVersions(transaction, namespace, "Address", "newyork", PersistenceDeletePolicy.FAIL_IF_INCOMING_LINKS).blockingAwait();
 
-            ZonedDateTime jan1624 = ZonedDateTime.of(1624, 1, 1, 12, 0, 0, (int) TimeUnit.MILLISECONDS.toNanos(0), ZoneId.of("Etc/UTC"));
-            ZonedDateTime jan1626 = ZonedDateTime.of(1626, 1, 1, 12, 0, 0, (int) TimeUnit.MILLISECONDS.toNanos(0), ZoneId.of("Etc/UTC"));
-            ZonedDateTime feb1663 = ZonedDateTime.of(1663, 2, 1, 0, 0, 0, (int) TimeUnit.MILLISECONDS.toNanos(0), ZoneId.of("Etc/UTC"));
-            ZonedDateTime jan1664 = ZonedDateTime.of(1664, 1, 1, 12, 0, 0, (int) TimeUnit.MILLISECONDS.toNanos(0), ZoneId.of("Etc/UTC"));
+            ZonedDateTime jan1624 = of(1624, 1, 1, 12, 0, 0, (int) TimeUnit.MILLISECONDS.toNanos(0), ZoneId.of("Etc/UTC"));
+            ZonedDateTime jan1626 = of(1626, 1, 1, 12, 0, 0, (int) TimeUnit.MILLISECONDS.toNanos(0), ZoneId.of("Etc/UTC"));
+            ZonedDateTime feb1663 = of(1663, 2, 1, 0, 0, 0, (int) TimeUnit.MILLISECONDS.toNanos(0), ZoneId.of("Etc/UTC"));
+            ZonedDateTime jan1664 = of(1664, 1, 1, 12, 0, 0, (int) TimeUnit.MILLISECONDS.toNanos(0), ZoneId.of("Etc/UTC"));
 
             persistence.createOrOverwrite(transaction, toDocument(namespace, "Address", "newyork", createAddress("", "NY", "USA"), jan1624), specification).blockingAwait();
             persistence.createOrOverwrite(transaction, toDocument(namespace, "Address", "newyork", createAddress("New Amsterdam", "NY", "USA"), jan1626), specification).blockingAwait();
@@ -199,11 +525,11 @@ public abstract class PersistenceIntegrationTest {
         try (Transaction transaction = persistence.createTransaction(false)) {
             persistence.deleteAllDocumentVersions(transaction, namespace, "Person", "john", PersistenceDeletePolicy.FAIL_IF_INCOMING_LINKS).blockingAwait();
 
-            ZonedDateTime aug92 = ZonedDateTime.of(1992, 8, 1, 13, 43, 20, (int) TimeUnit.MILLISECONDS.toNanos(301), ZoneId.of("Etc/UTC"));
-            ZonedDateTime feb10 = ZonedDateTime.of(2010, 2, 3, 15, 45, 22, (int) TimeUnit.MILLISECONDS.toNanos(303), ZoneId.of("Etc/UTC"));
-            ZonedDateTime nov13 = ZonedDateTime.of(2013, 11, 5, 17, 47, 24, (int) TimeUnit.MILLISECONDS.toNanos(305), ZoneId.of("Etc/UTC"));
-            ZonedDateTime sep18 = ZonedDateTime.of(2018, 9, 6, 18, 48, 25, (int) TimeUnit.MILLISECONDS.toNanos(306), ZoneId.of("Etc/UTC"));
-            ZonedDateTime oct18 = ZonedDateTime.of(2018, 10, 7, 19, 49, 26, (int) TimeUnit.MILLISECONDS.toNanos(307), ZoneId.of("Etc/UTC"));
+            ZonedDateTime aug92 = of(1992, 8, 1, 13, 43, 20, (int) TimeUnit.MILLISECONDS.toNanos(301), ZoneId.of("Etc/UTC"));
+            ZonedDateTime feb10 = of(2010, 2, 3, 15, 45, 22, (int) TimeUnit.MILLISECONDS.toNanos(303), ZoneId.of("Etc/UTC"));
+            ZonedDateTime nov13 = of(2013, 11, 5, 17, 47, 24, (int) TimeUnit.MILLISECONDS.toNanos(305), ZoneId.of("Etc/UTC"));
+            ZonedDateTime sep18 = of(2018, 9, 6, 18, 48, 25, (int) TimeUnit.MILLISECONDS.toNanos(306), ZoneId.of("Etc/UTC"));
+            ZonedDateTime oct18 = of(2018, 10, 7, 19, 49, 26, (int) TimeUnit.MILLISECONDS.toNanos(307), ZoneId.of("Etc/UTC"));
             persistence.createOrOverwrite(transaction, toDocument(namespace, "Person", "john", createPerson("John", "Smith"), aug92), specification).blockingAwait();
             persistence.createOrOverwrite(transaction, toDocument(namespace, "Person", "john", createPerson("James", "Smith"), nov13), specification).blockingAwait();
             persistence.createOrOverwrite(transaction, toDocument(namespace, "Person", "john", createPerson("John", "Smith"), oct18), specification).blockingAwait();
@@ -214,15 +540,14 @@ public abstract class PersistenceIntegrationTest {
         }
     }
 
-
     @Test
     public void thatReadAllVersionsWorks() {
         try (Transaction transaction = persistence.createTransaction(false)) {
             persistence.deleteAllDocumentVersions(transaction, namespace, "Person", "john", PersistenceDeletePolicy.FAIL_IF_INCOMING_LINKS).blockingAwait();
 
-            ZonedDateTime aug92 = ZonedDateTime.of(1992, 8, 1, 13, 43, 20, (int) TimeUnit.MILLISECONDS.toNanos(301), ZoneId.of("Etc/UTC"));
-            ZonedDateTime nov13 = ZonedDateTime.of(2013, 11, 5, 17, 47, 24, (int) TimeUnit.MILLISECONDS.toNanos(305), ZoneId.of("Etc/UTC"));
-            ZonedDateTime oct18 = ZonedDateTime.of(2018, 10, 7, 19, 49, 26, (int) TimeUnit.MILLISECONDS.toNanos(307), ZoneId.of("Etc/UTC"));
+            ZonedDateTime aug92 = of(1992, 8, 1, 13, 43, 20, (int) TimeUnit.MILLISECONDS.toNanos(301), ZoneId.of("Etc/UTC"));
+            ZonedDateTime nov13 = of(2013, 11, 5, 17, 47, 24, (int) TimeUnit.MILLISECONDS.toNanos(305), ZoneId.of("Etc/UTC"));
+            ZonedDateTime oct18 = of(2018, 10, 7, 19, 49, 26, (int) TimeUnit.MILLISECONDS.toNanos(307), ZoneId.of("Etc/UTC"));
             persistence.createOrOverwrite(transaction, toDocument(namespace, "Person", "john", createPerson("John", "Smith"), aug92), specification).blockingAwait();
             persistence.createOrOverwrite(transaction, toDocument(namespace, "Person", "john", createPerson("James", "Smith"), nov13), specification).blockingAwait();
             persistence.createOrOverwrite(transaction, toDocument(namespace, "Person", "john", createPerson("John", "Smith"), oct18), specification).blockingAwait();
@@ -235,8 +560,8 @@ public abstract class PersistenceIntegrationTest {
     public void thatFindSimpleWithPathAndValueWorks() {
         try (Transaction transaction = persistence.createTransaction(false)) {
             persistence.deleteAllDocumentVersions(transaction, namespace, "Person", "simple", PersistenceDeletePolicy.FAIL_IF_INCOMING_LINKS).blockingAwait();
-            ZonedDateTime sep18 = ZonedDateTime.of(2018, 9, 6, 18, 48, 25, (int) TimeUnit.MILLISECONDS.toNanos(306), ZoneId.of("Etc/UTC"));
-            ZonedDateTime oct18 = ZonedDateTime.of(2018, 10, 7, 19, 49, 26, (int) TimeUnit.MILLISECONDS.toNanos(307), ZoneId.of("Etc/UTC"));
+            ZonedDateTime sep18 = of(2018, 9, 6, 18, 48, 25, (int) TimeUnit.MILLISECONDS.toNanos(306), ZoneId.of("Etc/UTC"));
+            ZonedDateTime oct18 = of(2018, 10, 7, 19, 49, 26, (int) TimeUnit.MILLISECONDS.toNanos(307), ZoneId.of("Etc/UTC"));
             persistence.createOrOverwrite(transaction, toDocument(namespace, "Person", "simple", new JSONObject().put("firstname", "Simple"), sep18), specification).blockingAwait();
 
             Iterator<JsonDocument> iterator = persistence.findDocument(transaction, oct18, namespace, "Person", "$.firstname", "Simple", Range.unbounded()).blockingIterable().iterator();
@@ -253,12 +578,12 @@ public abstract class PersistenceIntegrationTest {
             persistence.deleteAllDocumentVersions(transaction, namespace, "Person", "john", PersistenceDeletePolicy.FAIL_IF_INCOMING_LINKS).blockingAwait();
             persistence.deleteAllDocumentVersions(transaction, namespace, "Person", "jane", PersistenceDeletePolicy.FAIL_IF_INCOMING_LINKS).blockingAwait();
 
-            ZonedDateTime aug92 = ZonedDateTime.of(1992, 8, 1, 13, 43, 20, (int) TimeUnit.MILLISECONDS.toNanos(301), ZoneId.of("Etc/UTC"));
-            ZonedDateTime sep94 = ZonedDateTime.of(1994, 9, 1, 13, 43, 20, (int) TimeUnit.MILLISECONDS.toNanos(301), ZoneId.of("Etc/UTC"));
-            ZonedDateTime feb10 = ZonedDateTime.of(2010, 2, 3, 15, 45, 22, (int) TimeUnit.MILLISECONDS.toNanos(303), ZoneId.of("Etc/UTC"));
-            ZonedDateTime nov13 = ZonedDateTime.of(2013, 11, 5, 17, 47, 24, (int) TimeUnit.MILLISECONDS.toNanos(305), ZoneId.of("Etc/UTC"));
-            ZonedDateTime sep18 = ZonedDateTime.of(2018, 9, 6, 18, 48, 25, (int) TimeUnit.MILLISECONDS.toNanos(306), ZoneId.of("Etc/UTC"));
-            ZonedDateTime oct18 = ZonedDateTime.of(2018, 10, 7, 19, 49, 26, (int) TimeUnit.MILLISECONDS.toNanos(307), ZoneId.of("Etc/UTC"));
+            ZonedDateTime aug92 = of(1992, 8, 1, 13, 43, 20, (int) TimeUnit.MILLISECONDS.toNanos(301), ZoneId.of("Etc/UTC"));
+            ZonedDateTime sep94 = of(1994, 9, 1, 13, 43, 20, (int) TimeUnit.MILLISECONDS.toNanos(301), ZoneId.of("Etc/UTC"));
+            ZonedDateTime feb10 = of(2010, 2, 3, 15, 45, 22, (int) TimeUnit.MILLISECONDS.toNanos(303), ZoneId.of("Etc/UTC"));
+            ZonedDateTime nov13 = of(2013, 11, 5, 17, 47, 24, (int) TimeUnit.MILLISECONDS.toNanos(305), ZoneId.of("Etc/UTC"));
+            ZonedDateTime sep18 = of(2018, 9, 6, 18, 48, 25, (int) TimeUnit.MILLISECONDS.toNanos(306), ZoneId.of("Etc/UTC"));
+            ZonedDateTime oct18 = of(2018, 10, 7, 19, 49, 26, (int) TimeUnit.MILLISECONDS.toNanos(307), ZoneId.of("Etc/UTC"));
             persistence.createOrOverwrite(transaction, toDocument(namespace, "Person", "john", createPerson("John", "Smith"), aug92), specification).blockingAwait();
             persistence.createOrOverwrite(transaction, toDocument(namespace, "Person", "jane", createPerson("Jane", "Doe"), sep94), specification).blockingAwait();
             persistence.createOrOverwrite(transaction, toDocument(namespace, "Person", "jane", createPerson("Jane", "Smith"), feb10), specification).blockingAwait();
@@ -287,12 +612,12 @@ public abstract class PersistenceIntegrationTest {
             persistence.deleteAllDocumentVersions(transaction, namespace, "Person", "john", PersistenceDeletePolicy.FAIL_IF_INCOMING_LINKS).blockingAwait();
             persistence.deleteAllDocumentVersions(transaction, namespace, "Person", "jane", PersistenceDeletePolicy.FAIL_IF_INCOMING_LINKS).blockingAwait();
 
-            ZonedDateTime aug92 = ZonedDateTime.of(1992, 8, 1, 13, 43, 20, (int) TimeUnit.MILLISECONDS.toNanos(301), ZoneId.of("Etc/UTC"));
-            ZonedDateTime sep94 = ZonedDateTime.of(1994, 9, 1, 13, 43, 20, (int) TimeUnit.MILLISECONDS.toNanos(301), ZoneId.of("Etc/UTC"));
-            ZonedDateTime feb10 = ZonedDateTime.of(2010, 2, 3, 15, 45, 22, (int) TimeUnit.MILLISECONDS.toNanos(303), ZoneId.of("Etc/UTC"));
-            ZonedDateTime dec11 = ZonedDateTime.of(2011, 12, 4, 16, 46, 23, (int) TimeUnit.MILLISECONDS.toNanos(304), ZoneId.of("Etc/UTC"));
-            ZonedDateTime nov13 = ZonedDateTime.of(2013, 11, 5, 17, 47, 24, (int) TimeUnit.MILLISECONDS.toNanos(305), ZoneId.of("Etc/UTC"));
-            ZonedDateTime oct18 = ZonedDateTime.of(2018, 10, 7, 19, 49, 26, (int) TimeUnit.MILLISECONDS.toNanos(307), ZoneId.of("Etc/UTC"));
+            ZonedDateTime aug92 = of(1992, 8, 1, 13, 43, 20, (int) TimeUnit.MILLISECONDS.toNanos(301), ZoneId.of("Etc/UTC"));
+            ZonedDateTime sep94 = of(1994, 9, 1, 13, 43, 20, (int) TimeUnit.MILLISECONDS.toNanos(301), ZoneId.of("Etc/UTC"));
+            ZonedDateTime feb10 = of(2010, 2, 3, 15, 45, 22, (int) TimeUnit.MILLISECONDS.toNanos(303), ZoneId.of("Etc/UTC"));
+            ZonedDateTime dec11 = of(2011, 12, 4, 16, 46, 23, (int) TimeUnit.MILLISECONDS.toNanos(304), ZoneId.of("Etc/UTC"));
+            ZonedDateTime nov13 = of(2013, 11, 5, 17, 47, 24, (int) TimeUnit.MILLISECONDS.toNanos(305), ZoneId.of("Etc/UTC"));
+            ZonedDateTime oct18 = of(2018, 10, 7, 19, 49, 26, (int) TimeUnit.MILLISECONDS.toNanos(307), ZoneId.of("Etc/UTC"));
             persistence.createOrOverwrite(transaction, toDocument(namespace, "Person", "john", createPerson("John", "Smith"), aug92), specification).blockingAwait();
             persistence.createOrOverwrite(transaction, toDocument(namespace, "Person", "jane", createPerson("Jane", "Doe"), sep94), specification).blockingAwait();
             persistence.createOrOverwrite(transaction, toDocument(namespace, "Person", "jane", createPerson("Jane", "Smith"), feb10), specification).blockingAwait();
@@ -322,8 +647,8 @@ public abstract class PersistenceIntegrationTest {
         try (Transaction transaction = persistence.createTransaction(false)) {
             persistence.deleteAllDocumentVersions(transaction, namespace, "FunkyLongAddress", "newyork", PersistenceDeletePolicy.FAIL_IF_INCOMING_LINKS).blockingAwait();
 
-            ZonedDateTime oct18 = ZonedDateTime.of(2018, 10, 7, 19, 49, 26, (int) TimeUnit.MILLISECONDS.toNanos(307), ZoneId.of("Etc/UTC"));
-            ZonedDateTime now = ZonedDateTime.now(ZoneId.of("Etc/UTC"));
+            ZonedDateTime oct18 = of(2018, 10, 7, 19, 49, 26, (int) TimeUnit.MILLISECONDS.toNanos(307), ZoneId.of("Etc/UTC"));
+            ZonedDateTime now = now(ZoneId.of("Etc/UTC"));
 
             String bigString = "12345678901234567890";
             for (int i = 0; i < 12; i++) {
@@ -359,7 +684,7 @@ public abstract class PersistenceIntegrationTest {
                 ))
         ));
         try (Transaction transaction = persistence.createTransaction(false)) {
-            ZonedDateTime oct18 = ZonedDateTime.of(2018, 10, 7, 19, 49, 26, (int) TimeUnit.MILLISECONDS.toNanos(307), ZoneId.of("Etc/UTC"));
+            ZonedDateTime oct18 = of(2018, 10, 7, 19, 49, 26, (int) TimeUnit.MILLISECONDS.toNanos(307), ZoneId.of("Etc/UTC"));
             JSONObject doc = new JSONObject().put("name", new JSONArray()
                     .put("John Smith")
                     .put("Jane Doe")
@@ -384,7 +709,7 @@ public abstract class PersistenceIntegrationTest {
                 ))
         ));
         try (Transaction transaction = persistence.createTransaction(false)) {
-            ZonedDateTime oct18 = ZonedDateTime.of(2018, 10, 7, 19, 49, 26, (int) TimeUnit.MILLISECONDS.toNanos(307), ZoneId.of("Etc/UTC"));
+            ZonedDateTime oct18 = of(2018, 10, 7, 19, 49, 26, (int) TimeUnit.MILLISECONDS.toNanos(307), ZoneId.of("Etc/UTC"));
             JSONObject doc = new JSONObject().put("name", new JSONArray()
                     .put(new JSONObject().put("first", "John").put("last", "Smith"))
                     .put(new JSONObject().put("first", "Jane").put("last", "Doe"))
@@ -396,24 +721,6 @@ public abstract class PersistenceIntegrationTest {
             System.out.format("%s%n", jsonDocument.document().toString());
             assertEquals(jsonDocument.document().toString(), doc.toString());
         }
-    }
-
-    protected static JSONObject createPerson(String firstname, String lastname) {
-        JSONObject person = new JSONObject();
-        person.put("firstname", firstname);
-        person.put("lastname", lastname);
-        person.put("born", 1998);
-        person.put("bornWeightKg", 3.82);
-        person.put("isHuman", true);
-        return person;
-    }
-
-    protected static JSONObject createAddress(String city, String state, String country) {
-        JSONObject address = new JSONObject();
-        address.put("city", city);
-        address.put("state", state);
-        address.put("country", country);
-        return address;
     }
 
     protected JsonDocument toDocument(String namespace, String entity, String id, JSONObject json, ZonedDateTime timestamp) {
