@@ -20,8 +20,10 @@ import java.util.LinkedHashSet;
 import java.util.Set;
 import java.util.concurrent.TimeUnit;
 
-import static java.lang.String.*;
-import static java.time.ZonedDateTime.*;
+import static java.lang.String.format;
+import static java.time.ZonedDateTime.now;
+import static java.time.ZonedDateTime.of;
+import static java.time.ZonedDateTime.parse;
 import static no.ssb.lds.core.persistence.test.SpecificationBuilder.arrayNode;
 import static no.ssb.lds.core.persistence.test.SpecificationBuilder.booleanNode;
 import static no.ssb.lds.core.persistence.test.SpecificationBuilder.numericNode;
@@ -102,6 +104,7 @@ public abstract class PersistenceIntegrationTest {
         ZonedDateTime timestamp = parse("2000-01-01T00:00:00.000Z");
         try (Transaction tx = persistence.createTransaction(false)) {
             try {
+                persistence.deleteAllEntities(tx, namespace, "Person", specification).blockingAwait();
 
                 // Create one before.
                 persistence.createOrOverwrite(tx, createPerson("person01", timestamp), specification).blockingAwait();
@@ -111,13 +114,13 @@ public abstract class PersistenceIntegrationTest {
                     .isFalse();
 
                 assertThat(persistence.hasPrevious(tx, timestamp, namespace, "Person", "person01").blockingGet())
-                        .as("hasNext() with empty database")
+                        .as("hasPrevious() with empty database")
                         .isFalse();
 
                 // Create one before.
                 persistence.createOrOverwrite(tx, createPerson("person00", timestamp), specification).blockingAwait();
                 assertThat(persistence.hasPrevious(tx, timestamp, namespace, "Person", "person01").blockingGet())
-                        .as("hasNext() with one before")
+                        .as("hasPrevious() with one before")
                         .isTrue();
 
                 // Create one after.
@@ -153,6 +156,7 @@ public abstract class PersistenceIntegrationTest {
 
         try (Transaction tx = persistence.createTransaction(false)) {
             try {
+                persistence.deleteAllEntities(tx, namespace, "Person", specification).blockingAwait();
 
                 // Create data.
                 persons.flatMapCompletable(document -> persistence.createOrOverwrite(tx, document, specification)).blockingAwait();
@@ -718,7 +722,6 @@ public abstract class PersistenceIntegrationTest {
             persistence.createOrOverwrite(transaction, input, specification).blockingAwait();
             JsonDocument jsonDocument = persistence.readDocument(transaction, oct18, namespace, "People", "1").blockingGet();
             assertNotNull(jsonDocument);
-            System.out.format("%s%n", jsonDocument.document().toString());
             assertEquals(jsonDocument.document().toString(), doc.toString());
         }
     }
