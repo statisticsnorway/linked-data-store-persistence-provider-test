@@ -1,8 +1,5 @@
 package no.ssb.lds.core.persistence.foundationdb;
 
-import no.ssb.lds.api.persistence.json.JsonPersistence;
-import no.ssb.lds.api.persistence.reactivex.RxJsonPersistenceBridge;
-import no.ssb.lds.api.persistence.reactivex.RxPersistenceBridge;
 import no.ssb.lds.core.persistence.test.PersistenceIntegrationTest;
 import org.testng.annotations.AfterClass;
 import org.testng.annotations.BeforeClass;
