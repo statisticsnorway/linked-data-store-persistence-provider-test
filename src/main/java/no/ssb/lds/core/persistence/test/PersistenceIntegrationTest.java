@@ -1,6 +1,7 @@
 package no.ssb.lds.core.persistence.test;
 
 import io.reactivex.Flowable;
+import no.ssb.lds.api.json.JsonNavigationPath;
 import no.ssb.lds.api.persistence.DocumentKey;
 import no.ssb.lds.api.persistence.PersistenceDeletePolicy;
 import no.ssb.lds.api.persistence.Transaction;
@@ -873,18 +874,36 @@ public abstract class PersistenceIntegrationTest {
 
             for (int i = 0; i < personIds.size(); i++) {
                 String personId = personIds.get(i);
-                for (String targetEntity : Set.of("Address", "FunkyLongAddress")) {
-                    List<JsonDocument> actualDocuments = new ArrayList<>();
-                    persistence.readLinkedDocuments(tx, timestamp, namespace, "Person", personId, "$.history.previousAddresses", targetEntity, Range.unbounded())
-                            .blockingForEach(actualJsonDocument -> actualDocuments.add(actualJsonDocument));
-                    assertEquals(actualDocuments.size(), entityIdsByEntityName.get(targetEntity).size());
-                    for (JsonDocument actualDoc : actualDocuments) {
-                        JsonDocument expectedJsonDocument = persistence.readDocument(tx, timestamp, namespace, targetEntity, actualDoc.key().id()).blockingGet();
-                        JSONAssert.assertEquals(actualDoc.document().toString(), expectedJsonDocument.document().toString(), true);
-                    }
-                }
+                readLinksAndCheckDocuments(tx, "$.history.previousAddresses[]", personId, timestamp, entityIdsByEntityName);
+                readLinkAndCheckDocument(tx, "$.history.currentAddress", personId, timestamp, entityIdsByEntityName);
+                readLinkAndCheckDocument(tx, "$.history.workAddress", personId, timestamp, entityIdsByEntityName);
             }
         }
+    }
+
+    private void readLinksAndCheckDocuments(Transaction tx, String jsonNavigationPath, String personId, ZonedDateTime timestamp, Map<String, List<String>> entityIdsByEntityName) {
+        for (String targetEntity : Set.of("Address", "FunkyLongAddress")) {
+            List<JsonDocument> actualDocuments = new ArrayList<>();
+            persistence.readLinkedDocuments(tx, timestamp, namespace, "Person", personId, JsonNavigationPath.from(jsonNavigationPath), targetEntity, Range.unbounded())
+                    .blockingForEach(actualJsonDocument -> actualDocuments.add(actualJsonDocument));
+            assertEquals(actualDocuments.size(), entityIdsByEntityName.get(targetEntity).size(), String.format("for entity: '%s'", targetEntity));
+            for (JsonDocument actualDoc : actualDocuments) {
+                JsonDocument expectedJsonDocument = persistence.readDocument(tx, timestamp, namespace, targetEntity, actualDoc.key().id()).blockingGet();
+                JSONAssert.assertEquals(actualDoc.document().toString(), expectedJsonDocument.document().toString(), true);
+            }
+        }
+    }
+
+    private void readLinkAndCheckDocument(Transaction tx, String jsonNavigationPath, String personId, ZonedDateTime timestamp, Map<String, List<String>> entityIdsByEntityName) {
+        List<JsonDocument> actualDocuments = new ArrayList<>();
+        for (String targetEntity : Set.of("Address", "FunkyLongAddress")) {
+            persistence.readLinkedDocuments(tx, timestamp, namespace, "Person", personId, JsonNavigationPath.from(jsonNavigationPath), targetEntity, Range.unbounded())
+                    .blockingForEach(actualJsonDocument -> actualDocuments.add(actualJsonDocument));
+        }
+        assertEquals(actualDocuments.size(), 1);
+        JsonDocument actualDoc = actualDocuments.get(0);
+        JsonDocument expectedJsonDocument = persistence.readDocument(tx, timestamp, namespace, actualDoc.key().entity(), actualDoc.key().id()).blockingGet();
+        JSONAssert.assertEquals(actualDoc.document().toString(), expectedJsonDocument.document().toString(), true);
     }
 
     protected JsonDocument toDocument(String namespace, String entity, String id, JSONObject json, ZonedDateTime timestamp) {
