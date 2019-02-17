@@ -1,5 +1,8 @@
 package no.ssb.lds.core.persistence.test;
 
+import com.fasterxml.jackson.databind.JsonNode;
+import com.fasterxml.jackson.databind.node.ArrayNode;
+import com.fasterxml.jackson.databind.node.ObjectNode;
 import io.reactivex.Flowable;
 import no.ssb.lds.api.json.JsonNavigationPath;
 import no.ssb.lds.api.persistence.DocumentKey;
@@ -10,8 +13,7 @@ import no.ssb.lds.api.persistence.reactivex.Range;
 import no.ssb.lds.api.persistence.reactivex.RxJsonPersistence;
 import no.ssb.lds.api.specification.Specification;
 import no.ssb.lds.api.specification.SpecificationElementType;
-import org.json.JSONArray;
-import org.json.JSONObject;
+import org.json.JSONException;
 import org.skyscreamer.jsonassert.JSONAssert;
 import org.testng.annotations.Test;
 
@@ -56,8 +58,8 @@ public abstract class PersistenceIntegrationTest {
         this.specification = buildSpecification();
     }
 
-    protected static JSONObject createPerson(String firstname, String lastname) {
-        JSONObject person = new JSONObject();
+    protected static ObjectNode createPerson(String firstname, String lastname) {
+        ObjectNode person = JsonDocument.mapper.createObjectNode();
         person.put("firstname", firstname);
         person.put("lastname", lastname);
         person.put("born", 1998);
@@ -66,27 +68,20 @@ public abstract class PersistenceIntegrationTest {
         return person;
     }
 
-    protected static JSONObject createPerson(String firstname, String lastname, String currentAddressLink, String workAddressLink, List<String> previousAddressesLinks) {
-        JSONObject person = new JSONObject();
-        person.put("firstname", firstname);
-        person.put("lastname", lastname);
-        person.put("born", 1998);
-        person.put("bornWeightKg", 3.82);
-        person.put("isHuman", true);
-        JSONArray prevAddressesArr = new JSONArray();
-        for (String previousAddressLink : previousAddressesLinks) {
-            prevAddressesArr.put(previousAddressLink);
-        }
-        person.put("history", new JSONObject()
+    protected static ObjectNode createPerson(String firstname, String lastname, String currentAddressLink, String workAddressLink, List<String> previousAddressesLinks) {
+        ObjectNode person = createPerson(firstname, lastname);
+        ObjectNode history = person.putObject("history")
                 .put("currentAddress", currentAddressLink)
-                .put("workAddress", workAddressLink)
-                .put("previousAddresses", prevAddressesArr)
-        );
+                .put("workAddress", workAddressLink);
+        ArrayNode previousAddresses = history.putArray("previousAddresses");
+        for (String previousAddressLink : previousAddressesLinks) {
+            previousAddresses.add(previousAddressLink);
+        }
         return person;
     }
 
-    protected static JSONObject createAddress(String city, String state, String country) {
-        JSONObject address = new JSONObject();
+    protected static ObjectNode createAddress(String city, String state, String country) {
+        ObjectNode address = JsonDocument.mapper.createObjectNode();
         address.put("city", city);
         address.put("state", state);
         address.put("country", country);
@@ -133,7 +128,7 @@ public abstract class PersistenceIntegrationTest {
     }
 
     @Test
-    public void thatDeleteAllWithIncomingRefWorks() {
+    public void thatDeleteAllWithIncomingRefWorks() throws JSONException {
         ZonedDateTime timestamp = parse("2019-01-01T00:00:00.000Z");
 
         JsonDocument paris = toDocument(namespace, "Address", "paris", createAddress("Paris", "", "France"), timestamp);
@@ -168,12 +163,12 @@ public abstract class PersistenceIntegrationTest {
             assertNull(londonFromDb);
             assertNull(osloFromDb);
             assertNull(jackFromDb);
-            JSONAssert.assertEquals(jill.document().toString(), jillFromDb.document().toString(), true);
+            JSONAssert.assertEquals(jill.jackson().toString(), jillFromDb.jackson().toString(), true);
         }
     }
 
     @Test
-    public void thatRefWorks() {
+    public void thatRefWorks() throws JSONException {
         ZonedDateTime timestamp = parse("2019-01-01T00:00:00.000Z");
 
         JsonDocument paris = toDocument(namespace, "Address", "paris", createAddress("Paris", "", "France"), timestamp);
@@ -198,8 +193,8 @@ public abstract class PersistenceIntegrationTest {
             JsonDocument jackFromDb = persistence.readDocument(tx, timestamp, namespace, "Person", "jack").blockingGet();
             JsonDocument jillFromDb = persistence.readDocument(tx, timestamp, namespace, "Person", "jill").blockingGet();
 
-            JSONAssert.assertEquals(jack.document().toString(), jackFromDb.document().toString(), true);
-            JSONAssert.assertEquals(jill.document().toString(), jillFromDb.document().toString(), true);
+            JSONAssert.assertEquals(jack.jackson().toString(), jackFromDb.jackson().toString(), true);
+            JSONAssert.assertEquals(jill.jackson().toString(), jillFromDb.jackson().toString(), true);
         }
     }
 
@@ -265,87 +260,87 @@ public abstract class PersistenceIntegrationTest {
 
 
                 Flowable<JsonDocument> allPersons = persistence.readDocuments(tx, timestamp, namespace, "Person", Range.unbounded());
-                assertThat(allPersons.map(JsonDocument::document).blockingIterable())
+                assertThat(allPersons.map(JsonDocument::jackson).blockingIterable())
                         .as("json documents returned by readDocuments(..., unbounded)")
-                        .usingElementComparator((o1, o2) -> o1.similar(o2) ? 0 : -1)
-                        .containsExactlyInAnyOrderElementsOf(persons.map(JsonDocument::document).blockingIterable());
+                        .usingElementComparator((o1, o2) -> o1.equals(o2) ? 0 : -1)
+                        .containsExactlyInAnyOrderElementsOf(persons.map(JsonDocument::jackson).blockingIterable());
 
                 Flowable<JsonDocument> firstThreePersons = persistence.readDocuments(tx, timestamp, namespace, "Person", Range.first(3));
-                assertThat(firstThreePersons.map(JsonDocument::document).blockingIterable())
+                assertThat(firstThreePersons.map(JsonDocument::jackson).blockingIterable())
                         .as("json documents returned by readDocuments(..., first(3))")
-                        .usingElementComparator((o1, o2) -> o1.similar(o2) ? 0 : -1)
+                        .usingElementComparator((o1, o2) -> o1.equals(o2) ? 0 : -1)
                         .containsExactly(
-                                createPerson("person00", timestamp).document(),
-                                createPerson("person01", timestamp).document(),
-                                createPerson("person02", timestamp).document()
+                                createPerson("person00", timestamp).jackson(),
+                                createPerson("person01", timestamp).jackson(),
+                                createPerson("person02", timestamp).jackson()
                         );
 
                 Flowable<JsonDocument> firstThreeAfter = persistence.readDocuments(tx, timestamp, namespace, "Person", Range.firstAfter(3, "person03"));
-                assertThat(firstThreeAfter.map(JsonDocument::document).blockingIterable())
+                assertThat(firstThreeAfter.map(JsonDocument::jackson).blockingIterable())
                         .as("json documents returned by readDocuments(..., firstAfter(3))")
-                        .usingElementComparator((o1, o2) -> o1.similar(o2) ? 0 : -1)
+                        .usingElementComparator((o1, o2) -> o1.equals(o2) ? 0 : -1)
                         .containsExactly(
-                                createPerson("person04", timestamp).document(),
-                                createPerson("person05", timestamp).document(),
-                                createPerson("person06", timestamp).document()
+                                createPerson("person04", timestamp).jackson(),
+                                createPerson("person05", timestamp).jackson(),
+                                createPerson("person06", timestamp).jackson()
                         );
 
                 Flowable<JsonDocument> firstThreeBetween = persistence.readDocuments(tx, timestamp, namespace, "Person", Range.firstBetween(2, "person06", "person10"));
-                assertThat(firstThreeBetween.map(JsonDocument::document).blockingIterable())
+                assertThat(firstThreeBetween.map(JsonDocument::jackson).blockingIterable())
                         .as("json documents returned by readDocuments(..., firstBetween(2, \"person05\", \"person10\"))")
-                        .usingElementComparator((o1, o2) -> o1.similar(o2) ? 0 : -1)
+                        .usingElementComparator((o1, o2) -> o1.equals(o2) ? 0 : -1)
                         .containsExactly(
-                                createPerson("person07", timestamp).document(),
-                                createPerson("person08", timestamp).document()
+                                createPerson("person07", timestamp).jackson(),
+                                createPerson("person08", timestamp).jackson()
                         );
 
                 Flowable<JsonDocument> firstFourBetween = persistence.readDocuments(tx, timestamp, namespace, "Person", Range.firstBetween(4, "person06", "person10"));
-                assertThat(firstFourBetween.map(JsonDocument::document).blockingIterable())
+                assertThat(firstFourBetween.map(JsonDocument::jackson).blockingIterable())
                         .as("json documents returned by readDocuments(..., firstBetween(4, \"person06\", \"person10\"))")
-                        .usingElementComparator((o1, o2) -> o1.similar(o2) ? 0 : -1)
+                        .usingElementComparator((o1, o2) -> o1.equals(o2) ? 0 : -1)
                         .containsExactly(
-                                createPerson("person07", timestamp).document(),
-                                createPerson("person08", timestamp).document(),
-                                createPerson("person09", timestamp).document()
+                                createPerson("person07", timestamp).jackson(),
+                                createPerson("person08", timestamp).jackson(),
+                                createPerson("person09", timestamp).jackson()
                         );
 
                 Flowable<JsonDocument> lastThree = persistence.readDocuments(tx, timestamp, namespace, "Person", Range.last(3));
-                assertThat(lastThree.map(JsonDocument::document).blockingIterable())
+                assertThat(lastThree.map(JsonDocument::jackson).blockingIterable())
                         .as("json documents returned by readDocuments(..., last(3))")
-                        .usingElementComparator((o1, o2) -> o1.similar(o2) ? 0 : -1)
+                        .usingElementComparator((o1, o2) -> o1.equals(o2) ? 0 : -1)
                         .containsExactly(
-                                createPerson("person11", timestamp).document(),
-                                createPerson("person10", timestamp).document(),
-                                createPerson("person09", timestamp).document()
+                                createPerson("person11", timestamp).jackson(),
+                                createPerson("person10", timestamp).jackson(),
+                                createPerson("person09", timestamp).jackson()
                         );
 
                 Flowable<JsonDocument> lastThreeBefore = persistence.readDocuments(tx, timestamp, namespace, "Person", Range.lastBefore(3, "person10"));
-                assertThat(lastThreeBefore.map(JsonDocument::document).blockingIterable())
+                assertThat(lastThreeBefore.map(JsonDocument::jackson).blockingIterable())
                         .as("json documents returned by readDocuments(..., lastBefore(3, \"person10\"))")
-                        .usingElementComparator((o1, o2) -> o1.similar(o2) ? 0 : -1)
+                        .usingElementComparator((o1, o2) -> o1.equals(o2) ? 0 : -1)
                         .containsExactly(
-                                createPerson("person09", timestamp).document(),
-                                createPerson("person08", timestamp).document(),
-                                createPerson("person07", timestamp).document()
+                                createPerson("person09", timestamp).jackson(),
+                                createPerson("person08", timestamp).jackson(),
+                                createPerson("person07", timestamp).jackson()
                         );
 
                 Flowable<JsonDocument> lastTwoBetween = persistence.readDocuments(tx, timestamp, namespace, "Person", Range.lastBetween(2, "person06", "person10"));
-                assertThat(lastTwoBetween.map(JsonDocument::document).blockingIterable())
+                assertThat(lastTwoBetween.map(JsonDocument::jackson).blockingIterable())
                         .as("json documents returned by readDocuments(..., lastBetween(2, \"person06\", \"person10\"))")
-                        .usingElementComparator((o1, o2) -> o1.similar(o2) ? 0 : -1)
+                        .usingElementComparator((o1, o2) -> o1.equals(o2) ? 0 : -1)
                         .containsExactly(
-                                createPerson("person09", timestamp).document(),
-                                createPerson("person08", timestamp).document()
+                                createPerson("person09", timestamp).jackson(),
+                                createPerson("person08", timestamp).jackson()
                         );
 
                 Flowable<JsonDocument> lastFourBetween = persistence.readDocuments(tx, timestamp, namespace, "Person", Range.lastBetween(4, "person06", "person10"));
-                assertThat(lastFourBetween.map(JsonDocument::document).blockingIterable())
+                assertThat(lastFourBetween.map(JsonDocument::jackson).blockingIterable())
                         .as("json documents returned by readDocuments(..., lastBetween(4, \"person06\", \"person10\"))")
-                        .usingElementComparator((o1, o2) -> o1.similar(o2) ? 0 : -1)
+                        .usingElementComparator((o1, o2) -> o1.equals(o2) ? 0 : -1)
                         .containsExactly(
-                                createPerson("person09", timestamp).document(),
-                                createPerson("person08", timestamp).document(),
-                                createPerson("person07", timestamp).document()
+                                createPerson("person09", timestamp).jackson(),
+                                createPerson("person08", timestamp).jackson(),
+                                createPerson("person07", timestamp).jackson()
                         );
 
 
@@ -379,109 +374,109 @@ public abstract class PersistenceIntegrationTest {
                         tx, namespace, "Person", "person00",
                         Range.unbounded()
                 );
-                assertThat(allPersons.map(JsonDocument::document).blockingIterable())
+                assertThat(allPersons.map(JsonDocument::jackson).blockingIterable())
                         .as("json documents returned by readDocuments(..., unbounded)")
-                        .usingElementComparator((o1, o2) -> o1.similar(o2) ? 0 : -1)
-                        .containsExactlyInAnyOrderElementsOf(persons.map(JsonDocument::document).blockingIterable());
+                        .usingElementComparator((o1, o2) -> o1.equals(o2) ? 0 : -1)
+                        .containsExactlyInAnyOrderElementsOf(persons.map(JsonDocument::jackson).blockingIterable());
 
                 Flowable<JsonDocument> firstThreePersons = persistence.readDocumentVersions(
                         tx, namespace, "Person", "person00",
                         Range.first(3)
                 );
-                assertThat(firstThreePersons.map(JsonDocument::document).blockingIterable())
+                assertThat(firstThreePersons.map(JsonDocument::jackson).blockingIterable())
                         .as("json documents returned by readDocuments(..., first(3))")
-                        .usingElementComparator((o1, o2) -> o1.similar(o2) ? 0 : -1)
+                        .usingElementComparator((o1, o2) -> o1.equals(o2) ? 0 : -1)
                         .containsExactly(
-                                createPersonVersion(timestamp.withMonth(1)).document(),
-                                createPersonVersion(timestamp.withMonth(2)).document(),
-                                createPersonVersion(timestamp.withMonth(3)).document()
+                                createPersonVersion(timestamp.withMonth(1)).jackson(),
+                                createPersonVersion(timestamp.withMonth(2)).jackson(),
+                                createPersonVersion(timestamp.withMonth(3)).jackson()
                         );
 
                 Flowable<JsonDocument> firstThreeAfter = persistence.readDocumentVersions(
                         tx, namespace, "Person", "person00",
                         Range.firstAfter(3, timestamp.withMonth(3))
                 );
-                assertThat(firstThreeAfter.map(JsonDocument::document).blockingIterable())
+                assertThat(firstThreeAfter.map(JsonDocument::jackson).blockingIterable())
                         .as("json documents returned by readDocuments(..., firstAfter(3, 2000-03...))")
-                        .usingElementComparator((o1, o2) -> o1.similar(o2) ? 0 : -1)
+                        .usingElementComparator((o1, o2) -> o1.equals(o2) ? 0 : -1)
                         .containsExactly(
-                                createPersonVersion(timestamp.withMonth(4)).document(),
-                                createPersonVersion(timestamp.withMonth(5)).document(),
-                                createPersonVersion(timestamp.withMonth(6)).document()
+                                createPersonVersion(timestamp.withMonth(4)).jackson(),
+                                createPersonVersion(timestamp.withMonth(5)).jackson(),
+                                createPersonVersion(timestamp.withMonth(6)).jackson()
                         );
 
                 Flowable<JsonDocument> firstThreeBetween = persistence.readDocumentVersions(
                         tx, namespace, "Person", "person00",
                         Range.firstBetween(2, timestamp.withMonth(6), timestamp.withMonth(10))
                 );
-                assertThat(firstThreeBetween.map(JsonDocument::document).blockingIterable())
+                assertThat(firstThreeBetween.map(JsonDocument::jackson).blockingIterable())
                         .as("json documents returned by readDocuments(..., firstBetween(2, \"person05\", \"person10\"))")
-                        .usingElementComparator((o1, o2) -> o1.similar(o2) ? 0 : -1)
+                        .usingElementComparator((o1, o2) -> o1.equals(o2) ? 0 : -1)
                         .containsExactly(
-                                createPersonVersion(timestamp.withMonth(7)).document(),
-                                createPersonVersion(timestamp.withMonth(8)).document()
+                                createPersonVersion(timestamp.withMonth(7)).jackson(),
+                                createPersonVersion(timestamp.withMonth(8)).jackson()
                         );
 
                 Flowable<JsonDocument> firstFourBetween = persistence.readDocumentVersions(
                         tx, namespace, "Person", "person00",
                         Range.firstBetween(4, timestamp.withMonth(6), timestamp.withMonth(10))
                 );
-                assertThat(firstFourBetween.map(JsonDocument::document).blockingIterable())
+                assertThat(firstFourBetween.map(JsonDocument::jackson).blockingIterable())
                         .as("json documents returned by readDocuments(..., firstBetween(4, 2000-06..., 2000-10...))")
-                        .usingElementComparator((o1, o2) -> o1.similar(o2) ? 0 : -1)
+                        .usingElementComparator((o1, o2) -> o1.equals(o2) ? 0 : -1)
                         .containsExactly(
-                                createPersonVersion(timestamp.withMonth(7)).document(),
-                                createPersonVersion(timestamp.withMonth(8)).document(),
-                                createPersonVersion(timestamp.withMonth(9)).document()
+                                createPersonVersion(timestamp.withMonth(7)).jackson(),
+                                createPersonVersion(timestamp.withMonth(8)).jackson(),
+                                createPersonVersion(timestamp.withMonth(9)).jackson()
                         );
 
                 Flowable<JsonDocument> lastThree = persistence.readDocumentVersions(
                         tx, namespace, "Person", "person00",
                         Range.last(3)
                 );
-                assertThat(lastThree.map(JsonDocument::document).blockingIterable())
+                assertThat(lastThree.map(JsonDocument::jackson).blockingIterable())
                         .as("json documents returned by readDocuments(..., last(3))")
-                        .usingElementComparator((o1, o2) -> o1.similar(o2) ? 0 : -1)
+                        .usingElementComparator((o1, o2) -> o1.equals(o2) ? 0 : -1)
                         .containsExactly(
-                                createPersonVersion(timestamp.withMonth(12)).document(),
-                                createPersonVersion(timestamp.withMonth(11)).document(),
-                                createPersonVersion(timestamp.withMonth(10)).document()
+                                createPersonVersion(timestamp.withMonth(12)).jackson(),
+                                createPersonVersion(timestamp.withMonth(11)).jackson(),
+                                createPersonVersion(timestamp.withMonth(10)).jackson()
                         );
 
                 Flowable<JsonDocument> lastThreeBefore = persistence.readDocumentVersions(
                         tx, namespace, "Person", "person00",
                         Range.lastBefore(3, timestamp.withMonth(10))
                 );
-                assertThat(lastThreeBefore.map(JsonDocument::document).blockingIterable())
+                assertThat(lastThreeBefore.map(JsonDocument::jackson).blockingIterable())
                         .as("json documents returned by readDocuments(..., lastBefore(3, \"person10\"))")
-                        .usingElementComparator((o1, o2) -> o1.similar(o2) ? 0 : -1)
+                        .usingElementComparator((o1, o2) -> o1.equals(o2) ? 0 : -1)
                         .containsExactly(
-                                createPersonVersion(timestamp.withMonth(9)).document(),
-                                createPersonVersion(timestamp.withMonth(8)).document(),
-                                createPersonVersion(timestamp.withMonth(7)).document()
+                                createPersonVersion(timestamp.withMonth(9)).jackson(),
+                                createPersonVersion(timestamp.withMonth(8)).jackson(),
+                                createPersonVersion(timestamp.withMonth(7)).jackson()
                         );
 
                 Flowable<JsonDocument> lastTwoBetween = persistence.readDocumentVersions(
                         tx, namespace, "Person", "person00",
                         Range.lastBetween(2, timestamp.withMonth(6), timestamp.withMonth(10)));
-                assertThat(lastTwoBetween.map(JsonDocument::document).blockingIterable())
+                assertThat(lastTwoBetween.map(JsonDocument::jackson).blockingIterable())
                         .as("json documents returned by readDocuments(..., lastBetween(2, \"person06\", \"person10\"))")
-                        .usingElementComparator((o1, o2) -> o1.similar(o2) ? 0 : -1)
+                        .usingElementComparator((o1, o2) -> o1.equals(o2) ? 0 : -1)
                         .containsExactly(
-                                createPersonVersion(timestamp.withMonth(9)).document(),
-                                createPersonVersion(timestamp.withMonth(8)).document()
+                                createPersonVersion(timestamp.withMonth(9)).jackson(),
+                                createPersonVersion(timestamp.withMonth(8)).jackson()
                         );
 
                 Flowable<JsonDocument> lastFourBetween = persistence.readDocumentVersions(
                         tx, namespace, "Person", "person00",
                         Range.lastBetween(4, timestamp.withMonth(6), timestamp.withMonth(10)));
-                assertThat(lastFourBetween.map(JsonDocument::document).blockingIterable())
+                assertThat(lastFourBetween.map(JsonDocument::jackson).blockingIterable())
                         .as("json documents returned by readDocuments(..., lastBetween(4, \"person06\", \"person10\"))")
-                        .usingElementComparator((o1, o2) -> o1.similar(o2) ? 0 : -1)
+                        .usingElementComparator((o1, o2) -> o1.equals(o2) ? 0 : -1)
                         .containsExactly(
-                                createPersonVersion(timestamp.withMonth(9)).document(),
-                                createPersonVersion(timestamp.withMonth(8)).document(),
-                                createPersonVersion(timestamp.withMonth(7)).document()
+                                createPersonVersion(timestamp.withMonth(9)).jackson(),
+                                createPersonVersion(timestamp.withMonth(8)).jackson(),
+                                createPersonVersion(timestamp.withMonth(7)).jackson()
                         );
 
 
@@ -542,7 +537,7 @@ public abstract class PersistenceIntegrationTest {
             JsonDocument output = persistence.readDocument(transaction, oct18, namespace, "Person", "john").blockingGet();
             assertNotNull(output);
             assertNotSame(output, input);
-            assertEquals(output.document().toString(), input.document().toString());
+            assertEquals(output.jackson().toString(), input.jackson().toString());
         }
     }
 
@@ -668,12 +663,12 @@ public abstract class PersistenceIntegrationTest {
             persistence.deleteAllDocumentVersions(transaction, namespace, "Person", "simple", PersistenceDeletePolicy.FAIL_IF_INCOMING_LINKS).blockingAwait();
             ZonedDateTime sep18 = of(2018, 9, 6, 18, 48, 25, (int) TimeUnit.MILLISECONDS.toNanos(306), ZoneId.of("Etc/UTC"));
             ZonedDateTime oct18 = of(2018, 10, 7, 19, 49, 26, (int) TimeUnit.MILLISECONDS.toNanos(307), ZoneId.of("Etc/UTC"));
-            persistence.createOrOverwrite(transaction, toDocument(namespace, "Person", "simple", new JSONObject().put("firstname", "Simple"), sep18), specification).blockingAwait();
+            persistence.createOrOverwrite(transaction, toDocument(namespace, "Person", "simple", JsonDocument.mapper.createObjectNode().put("firstname", "Simple"), sep18), specification).blockingAwait();
 
             Iterator<JsonDocument> iterator = persistence.findDocument(transaction, oct18, namespace, "Person", "$.firstname", "Simple", Range.unbounded()).blockingIterable().iterator();
             assertTrue(iterator.hasNext());
             JsonDocument person1 = iterator.next();
-            assertEquals(person1.document().getString("firstname"), "Simple");
+            assertEquals(person1.jackson().get("firstname").textValue(), "Simple");
             assertFalse(iterator.hasNext());
         }
     }
@@ -702,11 +697,11 @@ public abstract class PersistenceIntegrationTest {
             JsonDocument person2 = iterator.next();
             assertFalse(iterator.hasNext());
 
-            if (person1.document().getString("firstname").equals("Jane")) {
-                assertEquals(person2.document().getString("firstname"), "James");
+            if (person1.jackson().get("firstname").textValue().equals("Jane")) {
+                assertEquals(person2.jackson().get("firstname").textValue(), "James");
             } else {
-                assertEquals(person1.document().getString("firstname"), "James");
-                assertEquals(person2.document().getString("firstname"), "Jane");
+                assertEquals(person1.jackson().get("firstname").textValue(), "James");
+                assertEquals(person2.jackson().get("firstname").textValue(), "Jane");
             }
         }
     }
@@ -738,11 +733,11 @@ public abstract class PersistenceIntegrationTest {
             JsonDocument person2 = iterator.next();
             assertFalse(iterator.hasNext());
 
-            if (person1.document().getString("firstname").equals("Jane")) {
-                assertEquals(person2.document().getString("firstname"), "John");
+            if (person1.jackson().get("firstname").textValue().equals("Jane")) {
+                assertEquals(person2.jackson().get("firstname").textValue(), "John");
             } else {
-                assertEquals(person1.document().getString("firstname"), "John");
-                assertEquals(person2.document().getString("firstname"), "Jane");
+                assertEquals(person1.jackson().get("firstname").textValue(), "John");
+                assertEquals(person2.jackson().get("firstname").textValue(), "Jane");
             }
 
         }
@@ -770,7 +765,7 @@ public abstract class PersistenceIntegrationTest {
             assertTrue(iterator.hasNext());
             JsonDocument foundDocument = iterator.next();
             assertFalse(iterator.hasNext());
-            String foundBigString = foundDocument.document().getString("city");
+            String foundBigString = foundDocument.jackson().get("city").textValue();
             assertEquals(foundBigString, bigString);
 
             // Finding funky long address by city (with non-matching value)
@@ -791,14 +786,12 @@ public abstract class PersistenceIntegrationTest {
         ));
         try (Transaction transaction = persistence.createTransaction(false)) {
             ZonedDateTime oct18 = of(2018, 10, 7, 19, 49, 26, (int) TimeUnit.MILLISECONDS.toNanos(307), ZoneId.of("Etc/UTC"));
-            JSONObject doc = new JSONObject().put("name", new JSONArray()
-                    .put("John Smith")
-                    .put("Jane Doe")
-            );
+            ObjectNode doc = JsonDocument.mapper.createObjectNode();
+            doc.putArray("name").add("John Smith").add("Jane Doe");
             JsonDocument input = toDocument(namespace, "People", "1", doc, oct18);
             persistence.createOrOverwrite(transaction, input, specification).blockingAwait();
             JsonDocument jsonDocument = persistence.readDocument(transaction, oct18, namespace, "People", "1").blockingGet();
-            assertEquals(jsonDocument.document().toString(), doc.toString());
+            assertEquals(jsonDocument.jackson().toString(), doc.toString());
         }
     }
 
@@ -816,20 +809,20 @@ public abstract class PersistenceIntegrationTest {
         ));
         try (Transaction transaction = persistence.createTransaction(false)) {
             ZonedDateTime oct18 = of(2018, 10, 7, 19, 49, 26, (int) TimeUnit.MILLISECONDS.toNanos(307), ZoneId.of("Etc/UTC"));
-            JSONObject doc = new JSONObject().put("name", new JSONArray()
-                    .put(new JSONObject().put("first", "John").put("last", "Smith"))
-                    .put(new JSONObject().put("first", "Jane").put("last", "Doe"))
-            );
+            ObjectNode doc = JsonDocument.mapper.createObjectNode();
+            ArrayNode name = doc.putArray("name");
+            name.addObject().put("first", "John").put("last", "Smith");
+            name.addObject().put("first", "Jane").put("last", "Doe");
             JsonDocument input = toDocument(namespace, "People", "1", doc, oct18);
             persistence.createOrOverwrite(transaction, input, specification).blockingAwait();
             JsonDocument jsonDocument = persistence.readDocument(transaction, oct18, namespace, "People", "1").blockingGet();
             assertNotNull(jsonDocument);
-            assertEquals(jsonDocument.document().toString(), doc.toString());
+            assertEquals(jsonDocument.jackson().toString(), doc.toString());
         }
     }
 
     @Test
-    public void thatReadLinkedDocumentsWork() {
+    public void thatReadLinkedDocumentsWork() throws JSONException {
         ZonedDateTime timestamp = parse("2019-01-01T00:00:00.000Z");
 
         try (Transaction tx = persistence.createTransaction(false)) {
@@ -881,7 +874,7 @@ public abstract class PersistenceIntegrationTest {
         }
     }
 
-    private void readLinksAndCheckDocuments(Transaction tx, String jsonNavigationPath, String personId, ZonedDateTime timestamp, Map<String, List<String>> entityIdsByEntityName) {
+    private void readLinksAndCheckDocuments(Transaction tx, String jsonNavigationPath, String personId, ZonedDateTime timestamp, Map<String, List<String>> entityIdsByEntityName) throws JSONException {
         for (String targetEntity : Set.of("Address", "FunkyLongAddress")) {
             List<JsonDocument> actualDocuments = new ArrayList<>();
             persistence.readLinkedDocuments(tx, timestamp, namespace, "Person", personId, JsonNavigationPath.from(jsonNavigationPath), targetEntity, Range.unbounded())
@@ -889,12 +882,12 @@ public abstract class PersistenceIntegrationTest {
             assertEquals(actualDocuments.size(), entityIdsByEntityName.get(targetEntity).size(), String.format("for entity: '%s'", targetEntity));
             for (JsonDocument actualDoc : actualDocuments) {
                 JsonDocument expectedJsonDocument = persistence.readDocument(tx, timestamp, namespace, targetEntity, actualDoc.key().id()).blockingGet();
-                JSONAssert.assertEquals(actualDoc.document().toString(), expectedJsonDocument.document().toString(), true);
+                JSONAssert.assertEquals(actualDoc.jackson().toString(), expectedJsonDocument.jackson().toString(), true);
             }
         }
     }
 
-    private void readLinkAndCheckDocument(Transaction tx, String jsonNavigationPath, String personId, ZonedDateTime timestamp, Map<String, List<String>> entityIdsByEntityName) {
+    private void readLinkAndCheckDocument(Transaction tx, String jsonNavigationPath, String personId, ZonedDateTime timestamp, Map<String, List<String>> entityIdsByEntityName) throws JSONException {
         List<JsonDocument> actualDocuments = new ArrayList<>();
         for (String targetEntity : Set.of("Address", "FunkyLongAddress")) {
             persistence.readLinkedDocuments(tx, timestamp, namespace, "Person", personId, JsonNavigationPath.from(jsonNavigationPath), targetEntity, Range.unbounded())
@@ -903,10 +896,10 @@ public abstract class PersistenceIntegrationTest {
         assertEquals(actualDocuments.size(), 1);
         JsonDocument actualDoc = actualDocuments.get(0);
         JsonDocument expectedJsonDocument = persistence.readDocument(tx, timestamp, namespace, actualDoc.key().entity(), actualDoc.key().id()).blockingGet();
-        JSONAssert.assertEquals(actualDoc.document().toString(), expectedJsonDocument.document().toString(), true);
+        JSONAssert.assertEquals(actualDoc.jackson().toString(), expectedJsonDocument.jackson().toString(), true);
     }
 
-    protected JsonDocument toDocument(String namespace, String entity, String id, JSONObject json, ZonedDateTime timestamp) {
+    protected JsonDocument toDocument(String namespace, String entity, String id, JsonNode json, ZonedDateTime timestamp) {
         return new JsonDocument(new DocumentKey(namespace, entity, id, timestamp), json);
     }
 }
