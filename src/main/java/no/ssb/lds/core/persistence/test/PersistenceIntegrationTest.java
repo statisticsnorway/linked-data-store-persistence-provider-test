@@ -32,6 +32,7 @@ import static java.lang.String.format;
 import static java.time.ZonedDateTime.now;
 import static java.time.ZonedDateTime.of;
 import static java.time.ZonedDateTime.parse;
+import static no.ssb.lds.api.persistence.json.JsonTools.mapper;
 import static no.ssb.lds.core.persistence.test.SpecificationBuilder.arrayNode;
 import static no.ssb.lds.core.persistence.test.SpecificationBuilder.arrayRefNode;
 import static no.ssb.lds.core.persistence.test.SpecificationBuilder.booleanNode;
@@ -59,7 +60,7 @@ public abstract class PersistenceIntegrationTest {
     }
 
     protected static ObjectNode createPerson(String firstname, String lastname) {
-        ObjectNode person = JsonDocument.mapper.createObjectNode();
+        ObjectNode person = mapper.createObjectNode();
         person.put("firstname", firstname);
         person.put("lastname", lastname);
         person.put("born", 1998);
@@ -81,7 +82,7 @@ public abstract class PersistenceIntegrationTest {
     }
 
     protected static ObjectNode createAddress(String city, String state, String country) {
-        ObjectNode address = JsonDocument.mapper.createObjectNode();
+        ObjectNode address = mapper.createObjectNode();
         address.put("city", city);
         address.put("state", state);
         address.put("country", country);
@@ -663,7 +664,7 @@ public abstract class PersistenceIntegrationTest {
             persistence.deleteAllDocumentVersions(transaction, namespace, "Person", "simple", PersistenceDeletePolicy.FAIL_IF_INCOMING_LINKS).blockingAwait();
             ZonedDateTime sep18 = of(2018, 9, 6, 18, 48, 25, (int) TimeUnit.MILLISECONDS.toNanos(306), ZoneId.of("Etc/UTC"));
             ZonedDateTime oct18 = of(2018, 10, 7, 19, 49, 26, (int) TimeUnit.MILLISECONDS.toNanos(307), ZoneId.of("Etc/UTC"));
-            persistence.createOrOverwrite(transaction, toDocument(namespace, "Person", "simple", JsonDocument.mapper.createObjectNode().put("firstname", "Simple"), sep18), specification).blockingAwait();
+            persistence.createOrOverwrite(transaction, toDocument(namespace, "Person", "simple", mapper.createObjectNode().put("firstname", "Simple"), sep18), specification).blockingAwait();
 
             Iterator<JsonDocument> iterator = persistence.findDocument(transaction, oct18, namespace, "Person", "$.firstname", "Simple", Range.unbounded()).blockingIterable().iterator();
             assertTrue(iterator.hasNext());
@@ -786,7 +787,7 @@ public abstract class PersistenceIntegrationTest {
         ));
         try (Transaction transaction = persistence.createTransaction(false)) {
             ZonedDateTime oct18 = of(2018, 10, 7, 19, 49, 26, (int) TimeUnit.MILLISECONDS.toNanos(307), ZoneId.of("Etc/UTC"));
-            ObjectNode doc = JsonDocument.mapper.createObjectNode();
+            ObjectNode doc = mapper.createObjectNode();
             doc.putArray("name").add("John Smith").add("Jane Doe");
             JsonDocument input = toDocument(namespace, "People", "1", doc, oct18);
             persistence.createOrOverwrite(transaction, input, specification).blockingAwait();
@@ -809,7 +810,7 @@ public abstract class PersistenceIntegrationTest {
         ));
         try (Transaction transaction = persistence.createTransaction(false)) {
             ZonedDateTime oct18 = of(2018, 10, 7, 19, 49, 26, (int) TimeUnit.MILLISECONDS.toNanos(307), ZoneId.of("Etc/UTC"));
-            ObjectNode doc = JsonDocument.mapper.createObjectNode();
+            ObjectNode doc = mapper.createObjectNode();
             ArrayNode name = doc.putArray("name");
             name.addObject().put("first", "John").put("last", "Smith");
             name.addObject().put("first", "Jane").put("last", "Doe");
