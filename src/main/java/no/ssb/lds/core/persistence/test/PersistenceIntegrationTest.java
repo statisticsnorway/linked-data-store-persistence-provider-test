@@ -9,6 +9,7 @@ import no.ssb.lds.api.persistence.DocumentKey;
 import no.ssb.lds.api.persistence.PersistenceDeletePolicy;
 import no.ssb.lds.api.persistence.Transaction;
 import no.ssb.lds.api.persistence.json.JsonDocument;
+import no.ssb.lds.api.persistence.json.JsonTools;
 import no.ssb.lds.api.persistence.reactivex.Range;
 import no.ssb.lds.api.persistence.reactivex.RxJsonPersistence;
 import no.ssb.lds.api.specification.Specification;
@@ -527,7 +528,7 @@ public abstract class PersistenceIntegrationTest {
     }
 
     @Test
-    public void thatBasicCreateThenReadWorks() {
+    public void thatBasicCreateThenReadWorks() throws JSONException {
         try (Transaction transaction = persistence.createTransaction(false)) {
             persistence.deleteAllDocumentVersions(transaction, namespace, "Person", "john", PersistenceDeletePolicy.FAIL_IF_INCOMING_LINKS).blockingAwait();
 
@@ -538,7 +539,7 @@ public abstract class PersistenceIntegrationTest {
             JsonDocument output = persistence.readDocument(transaction, oct18, namespace, "Person", "john").blockingGet();
             assertNotNull(output);
             assertNotSame(output, input);
-            assertEquals(output.jackson().toString(), input.jackson().toString());
+            JSONAssert.assertEquals(JsonTools.toJson(output.jackson()), JsonTools.toJson(input.jackson()), true);
         }
     }
 
