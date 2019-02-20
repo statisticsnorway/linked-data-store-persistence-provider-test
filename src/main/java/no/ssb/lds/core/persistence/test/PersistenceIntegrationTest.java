@@ -667,7 +667,7 @@ public abstract class PersistenceIntegrationTest {
             ZonedDateTime oct18 = of(2018, 10, 7, 19, 49, 26, (int) TimeUnit.MILLISECONDS.toNanos(307), ZoneId.of("Etc/UTC"));
             persistence.createOrOverwrite(transaction, toDocument(namespace, "Person", "simple", mapper.createObjectNode().put("firstname", "Simple"), sep18), specification).blockingAwait();
 
-            Iterator<JsonDocument> iterator = persistence.findDocument(transaction, oct18, namespace, "Person", "$.firstname", "Simple", Range.unbounded()).blockingIterable().iterator();
+            Iterator<JsonDocument> iterator = persistence.findDocument(transaction, oct18, namespace, "Person", JsonNavigationPath.from("$.firstname"), "Simple", Range.unbounded()).blockingIterable().iterator();
             assertTrue(iterator.hasNext());
             JsonDocument person1 = iterator.next();
             assertEquals(person1.jackson().get("firstname").textValue(), "Simple");
@@ -675,7 +675,7 @@ public abstract class PersistenceIntegrationTest {
         }
     }
 
-    //@Test
+    @Test
     public void thatFindAllWithPathAndValueWorks() {
         try (Transaction transaction = persistence.createTransaction(false)) {
             persistence.deleteAllDocumentVersions(transaction, namespace, "Person", "john", PersistenceDeletePolicy.FAIL_IF_INCOMING_LINKS).blockingAwait();
@@ -693,7 +693,7 @@ public abstract class PersistenceIntegrationTest {
             persistence.createOrOverwrite(transaction, toDocument(namespace, "Person", "john", createPerson("James", "Smith"), nov13), specification).blockingAwait();
             persistence.createOrOverwrite(transaction, toDocument(namespace, "Person", "john", createPerson("John", "Smith"), oct18), specification).blockingAwait();
 
-            Iterator<JsonDocument> iterator = persistence.findDocument(transaction, sep18, namespace, "Person", "$.lastname", "Smith", Range.unbounded()).blockingIterable().iterator();
+            Iterator<JsonDocument> iterator = persistence.findDocument(transaction, sep18, namespace, "Person", JsonNavigationPath.from("$.lastname"), "Smith", Range.unbounded()).blockingIterable().iterator();
 
             JsonDocument person1 = iterator.next();
             JsonDocument person2 = iterator.next();
@@ -762,7 +762,7 @@ public abstract class PersistenceIntegrationTest {
             persistence.createOrOverwrite(transaction, toDocument(namespace, "FunkyLongAddress", "newyork", createAddress(bigString, "NY", "USA"), oct18), specification).blockingAwait();
 
             // Finding funky long address by city
-            Iterable<JsonDocument> funkyLongAddress = persistence.findDocument(transaction, now, namespace, "FunkyLongAddress", "$.city", bigString, Range.unbounded()).blockingIterable();
+            Iterable<JsonDocument> funkyLongAddress = persistence.findDocument(transaction, now, namespace, "FunkyLongAddress", JsonNavigationPath.from("$.city"), bigString, Range.unbounded()).blockingIterable();
             Iterator<JsonDocument> iterator = funkyLongAddress.iterator();
             assertTrue(iterator.hasNext());
             JsonDocument foundDocument = iterator.next();
@@ -771,7 +771,7 @@ public abstract class PersistenceIntegrationTest {
             assertEquals(foundBigString, bigString);
 
             // Finding funky long address by city (with non-matching value)
-            int findExpectNoMatchSize = size(persistence.findDocument(transaction, now, namespace, "FunkyLongAddress", "$.city", bigString + "1", Range.unbounded()).blockingIterable().iterator());
+            int findExpectNoMatchSize = size(persistence.findDocument(transaction, now, namespace, "FunkyLongAddress", JsonNavigationPath.from("$.city"), bigString + "1", Range.unbounded()).blockingIterable().iterator());
             assertEquals(findExpectNoMatchSize, 0);
 
             // Deleting funky long address
