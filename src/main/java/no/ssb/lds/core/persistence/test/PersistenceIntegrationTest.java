@@ -170,6 +170,46 @@ public abstract class PersistenceIntegrationTest {
     }
 
     @Test
+    public void thatBatchCreationWorks() throws JSONException {
+        ZonedDateTime timestamp = parse("2019-01-01T00:00:00.000Z");
+
+        JsonDocument paris = toDocument(namespace, "Address", "paris", createAddress("Paris", "", "France"), timestamp);
+        JsonDocument london = toDocument(namespace, "Address", "london", createAddress("London", "", "England"), timestamp);
+        JsonDocument oslo = toDocument(namespace, "Address", "oslo", createAddress("Oslo", "", "Norway"), timestamp);
+        JsonDocument trondheim = toDocument(namespace, "FunkyLongAddress", "trondheim", createAddress("Trondheim", "", "Norway"), timestamp);
+        JsonDocument jack = toDocument(namespace, "Person", "jack", createPerson("Jack", "Smith", "/Address/oslo", "/Address/oslo", List.of("/Address/london", "/Address/paris")), timestamp);
+        JsonDocument jill = toDocument(namespace, "Person", "jill", createPerson("Jill", "Smith", "/Address/oslo", "/FunkyLongAddress/trondheim", List.of("/Address/london", "/FunkyLongAddress/trondheim")), timestamp);
+
+        try (Transaction tx = persistence.createTransaction(false)) {
+            persistence.deleteAllEntities(tx, namespace, "Person", specification).blockingAwait();
+            persistence.deleteAllEntities(tx, namespace, "Address", specification).blockingAwait();
+            persistence.deleteAllEntities(tx, namespace, "FunkyLongAddress", specification).blockingAwait();
+
+            persistence.createOrOverwrite(tx, Flowable.just(paris, london, oslo, trondheim, jack, jill), specification).blockingAwait();
+
+            JsonDocument parisFromDb = persistence.readDocument(tx, timestamp, namespace, "Address", "paris").blockingGet();
+            JsonDocument londonFromDb = persistence.readDocument(tx, timestamp, namespace, "Address", "london").blockingGet();
+            JsonDocument osloFromDb = persistence.readDocument(tx, timestamp, namespace, "Address", "oslo").blockingGet();
+            JsonDocument trondheimFromDb = persistence.readDocument(tx, timestamp, namespace, "FunkyLongAddress", "trondheim").blockingGet();
+            JsonDocument jackFromDb = persistence.readDocument(tx, timestamp, namespace, "Person", "jack").blockingGet();
+            JsonDocument jillFromDb = persistence.readDocument(tx, timestamp, namespace, "Person", "jill").blockingGet();
+
+            assertNotNull(parisFromDb);
+            assertNotNull(londonFromDb);
+            assertNotNull(osloFromDb);
+            assertNotNull(trondheimFromDb);
+            assertNotNull(jackFromDb);
+            assertNotNull(jillFromDb);
+            JSONAssert.assertEquals(paris.jackson().toString(), parisFromDb.jackson().toString(), true);
+            JSONAssert.assertEquals(london.jackson().toString(), londonFromDb.jackson().toString(), true);
+            JSONAssert.assertEquals(oslo.jackson().toString(), osloFromDb.jackson().toString(), true);
+            JSONAssert.assertEquals(trondheim.jackson().toString(), trondheimFromDb.jackson().toString(), true);
+            JSONAssert.assertEquals(jill.jackson().toString(), jillFromDb.jackson().toString(), true);
+            JSONAssert.assertEquals(jack.jackson().toString(), jackFromDb.jackson().toString(), true);
+        }
+    }
+
+    @Test
     public void thatRefWorks() throws JSONException {
         ZonedDateTime timestamp = parse("2019-01-01T00:00:00.000Z");
 
