@@ -14,6 +14,7 @@ import no.ssb.lds.api.persistence.reactivex.Range;
 import no.ssb.lds.api.persistence.reactivex.RxJsonPersistence;
 import no.ssb.lds.api.specification.Specification;
 import no.ssb.lds.api.specification.SpecificationElementType;
+import no.ssb.lds.core.persistence.neo4j.Neo4jPersistence;
 import org.json.JSONException;
 import org.skyscreamer.jsonassert.JSONAssert;
 import org.testng.annotations.Test;
@@ -21,7 +22,9 @@ import org.testng.annotations.Test;
 import java.time.ZoneId;
 import java.time.ZonedDateTime;
 import java.util.ArrayList;
+import java.util.Collections;
 import java.util.Iterator;
+import java.util.LinkedHashMap;
 import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Map;
@@ -888,30 +891,80 @@ public abstract class PersistenceIntegrationTest {
                 funkyIds.add(id);
             }
 
-            Map<String, List<String>> entityIdsByEntityName = Map.of(
-                    "Address", addressIds,
-                    "FunkyLongAddress", funkyIds
-            );
-
             List<String> links = new ArrayList<>();
             links.addAll(addressIds.stream().map(l -> "/Address/" + l).collect(Collectors.toList()));
             links.addAll(funkyIds.stream().map(l -> "/FunkyLongAddress/" + l).collect(Collectors.toList()));
+
+            Map<String, Map<String, List<String>>> relationsBySource = new LinkedHashMap<>();
+            Map<String, Map<String, List<String>>> relationsByTarget = new LinkedHashMap<>();
 
             List<String> personIds = new ArrayList<>();
             List<String> names = List.of("Jack", "Jill", "Jane", "Jones");
             for (int i = 0; i < 11; i++) {
                 String id = "person" + (i + 1);
+                String personLink = "/Person/" + id;
                 JsonDocument person;
-                person = toDocument(namespace, "Person", id, createPerson(names.get(i % names.size()) + " " + i, "Smith", links.get((2 * i) % links.size()), links.get((2 * i + 1) % links.size()), links), timestamp);
+                String currentAddressLink = links.get((2 * i) % links.size());
+                String workAddressLink = links.get((2 * i + 1) % links.size());
+
+                relationsBySource
+                        .computeIfAbsent(personLink, k -> new LinkedHashMap<>())
+                        .computeIfAbsent("$.history.currentAddress", p -> new ArrayList<>())
+                        .add(currentAddressLink);
+                relationsBySource
+                        .computeIfAbsent(personLink, k -> new LinkedHashMap<>())
+                        .computeIfAbsent("$.history.workAddress", p -> new ArrayList<>())
+                        .add(workAddressLink);
+                relationsBySource
+                        .computeIfAbsent(personLink, k -> new LinkedHashMap<>())
+                        .computeIfAbsent("$.history.previousAddresses[]", p -> new ArrayList<>())
+                        .addAll(links);
+
+                relationsByTarget
+                        .computeIfAbsent(currentAddressLink, k -> new LinkedHashMap<>())
+                        .computeIfAbsent("$.history.currentAddress", p -> new ArrayList<>())
+                        .add(personLink);
+                relationsByTarget
+                        .computeIfAbsent(workAddressLink, k -> new LinkedHashMap<>())
+                        .computeIfAbsent("$.history.workAddress", p -> new ArrayList<>())
+                        .add(personLink);
+                for (String link : links) {
+                    relationsByTarget
+                            .computeIfAbsent(link, k -> new LinkedHashMap<>())
+                            .computeIfAbsent("$.history.previousAddresses[]", p -> new ArrayList<>())
+                            .add(personLink);
+                }
+
+                person = toDocument(namespace, "Person", id, createPerson(names.get(i % names.size()) + " " + i, "Smith", currentAddressLink, workAddressLink, links), timestamp);
                 persistence.createOrOverwrite(tx, person, specification).blockingAwait();
                 personIds.add(id);
             }
+
+            Map<String, List<String>> entityIdsByEntityName = Map.of(
+                    "Address", addressIds,
+                    "FunkyLongAddress", funkyIds,
+                    "Person", personIds
+            );
 
             for (int i = 0; i < personIds.size(); i++) {
                 String personId = personIds.get(i);
                 readLinksAndCheckDocuments(tx, "$.history.previousAddresses[]", personId, timestamp, entityIdsByEntityName);
                 readLinkAndCheckDocument(tx, "$.history.currentAddress", personId, timestamp, entityIdsByEntityName);
                 readLinkAndCheckDocument(tx, "$.history.workAddress", personId, timestamp, entityIdsByEntityName);
+            }
+
+            for (int i = 0; i < addressIds.size(); i++) {
+                String addressId = addressIds.get(i);
+                readBackLinksAndCheckRelations(tx, "Address", addressId, "Person", "$.history.previousAddresses[]", timestamp, relationsByTarget);
+                readBackLinksAndCheckRelations(tx, "Address", addressId, "Person", "$.history.currentAddress", timestamp, relationsByTarget);
+                readBackLinksAndCheckRelations(tx, "Address", addressId, "Person", "$.history.workAddress", timestamp, relationsByTarget);
+            }
+
+            for (int i = 0; i < funkyIds.size(); i++) {
+                String funkyId = funkyIds.get(i);
+                readBackLinksAndCheckRelations(tx, "FunkyLongAddress", funkyId, "Person", "$.history.previousAddresses[]", timestamp, relationsByTarget);
+                readBackLinksAndCheckRelations(tx, "FunkyLongAddress", funkyId, "Person", "$.history.currentAddress", timestamp, relationsByTarget);
+                readBackLinksAndCheckRelations(tx, "FunkyLongAddress", funkyId, "Person", "$.history.workAddress", timestamp, relationsByTarget);
             }
         }
     }
@@ -939,6 +992,18 @@ public abstract class PersistenceIntegrationTest {
         JsonDocument actualDoc = actualDocuments.get(0);
         JsonDocument expectedJsonDocument = persistence.readDocument(tx, timestamp, namespace, actualDoc.key().entity(), actualDoc.key().id()).blockingGet();
         JSONAssert.assertEquals(actualDoc.jackson().toString(), expectedJsonDocument.jackson().toString(), true);
+    }
+
+    private void readBackLinksAndCheckRelations(Transaction tx, String targetEntity, String targetId, String sourceEntity, String jsonNavigationPath, ZonedDateTime timestamp, Map<String, Map<String, List<String>>> relationsByTarget) {
+        List<String> actualDocuments = new ArrayList<>();
+        ((Neo4jPersistence) persistence).readReverseLinkedDocuments(tx, timestamp, namespace, targetEntity, targetId, JsonNavigationPath.from(jsonNavigationPath), sourceEntity, Range.unbounded())
+                .blockingForEach(actualJsonDocument -> actualDocuments.add("/" + actualJsonDocument.key().entity() + "/" + actualJsonDocument.key().id()));
+        String targetLink = "/" + targetEntity + "/" + targetId;
+        List<String> expectedLinks = relationsByTarget.get(targetLink).get(jsonNavigationPath);
+        assertEquals(actualDocuments.size(), expectedLinks.size(), String.format("for entity: '%s'", targetEntity));
+        Collections.sort(actualDocuments);
+        Collections.sort(expectedLinks);
+        assertEquals(actualDocuments, expectedLinks);
     }
 
     protected JsonDocument toDocument(String namespace, String entity, String id, JsonNode json, ZonedDateTime timestamp) {
