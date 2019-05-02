@@ -285,6 +285,79 @@ public abstract class PersistenceIntegrationTest {
     }
 
     @Test
+    public void testParentNavigation() {
+        ZonedDateTime timestamp = parse("2000-01-01T00:00:00.000Z");
+        try (Transaction tx = persistence.createTransaction(false)) {
+            try {
+                persistence.deleteAllEntities(tx, namespace, "Person", specification).blockingAwait();
+                persistence.deleteAllEntities(tx, namespace, "Address", specification).blockingAwait();
+                persistence.deleteAllEntities(tx, namespace, "FunkyLongAddress", specification).blockingAwait();
+
+                JsonDocument paris = toDocument(namespace, "Address", "paris", createAddress("Paris", "", "France"), timestamp);
+                JsonDocument london = toDocument(namespace, "Address", "london", createAddress("London", "", "England"), timestamp);
+                JsonDocument oslo = toDocument(namespace, "Address", "oslo", createAddress("Oslo", "", "Norway"), timestamp);
+                JsonDocument trondheim = toDocument(namespace, "FunkyLongAddress", "trondheim", createAddress("Trondheim", "", "Norway"), timestamp);
+                JsonDocument jack = toDocument(namespace, "Person", "jack", createPerson("Jack", "Smith", "/Address/oslo", "/Address/oslo", List.of("/Address/london", "/Address/paris")), timestamp);
+                JsonDocument jill = toDocument(namespace, "Person", "jill", createPerson("Jill", "Smith", "/Address/oslo", "/FunkyLongAddress/trondheim", List.of("/Address/london", "/FunkyLongAddress/trondheim")), timestamp);
+                JsonDocument maurice = toDocument(namespace, "Person", "maurice", createPerson("Maurice", "Smith", "/Address/paris", "/FunkyLongAddress/trondheim", List.of("/Address/london", "/FunkyLongAddress/trondheim")), timestamp);
+
+                persistence.deleteAllEntities(tx, namespace, "Person", specification).blockingAwait();
+                persistence.deleteAllEntities(tx, namespace, "Address", specification).blockingAwait();
+                persistence.deleteAllEntities(tx, namespace, "FunkyLongAddress", specification).blockingAwait();
+
+                persistence.createOrOverwrite(tx, paris, specification).blockingAwait();
+                persistence.createOrOverwrite(tx, london, specification).blockingAwait();
+                persistence.createOrOverwrite(tx, oslo, specification).blockingAwait();
+                persistence.createOrOverwrite(tx, trondheim, specification).blockingAwait();
+                persistence.createOrOverwrite(tx, jack, specification).blockingAwait();
+                persistence.createOrOverwrite(tx, jill, specification).blockingAwait();
+                persistence.createOrOverwrite(tx, maurice, specification).blockingAwait();
+
+                List<JsonDocument> livingInOslo = persistence.readSourceDocuments(tx, timestamp, namespace,
+                        "Address", "oslo", JsonNavigationPath.from("$.history.currentAddress"),
+                        "Person", Range.unbounded()).toList().blockingGet();
+
+                // TODO: contains.
+                assertThat(livingInOslo).hasSize(2);
+
+                Flowable<JsonDocument> workingInOslo = persistence.readSourceDocuments(tx, timestamp, namespace,
+                        "Address", "oslo", JsonNavigationPath.from("$.history.workAddress"),
+                        "Person", Range.unbounded());
+                assertThat(workingInOslo.map(JsonDocument::jackson).blockingIterable())
+                        .as("People with oslo as workAddress")
+                        .containsExactly(jack.jackson());
+
+                Flowable<JsonDocument> livedInLondon = persistence.readSourceDocuments(tx, timestamp, namespace,
+                        "Address", "london", JsonNavigationPath.from("$.history.previousAddresses[]"),
+                        "Person", Range.unbounded());
+                assertThat(livedInLondon.map(JsonDocument::jackson).blockingIterable())
+                        .as("People with london in previousAddresses[]")
+                        .containsExactly(jack.jackson(), jill.jackson(), maurice.jackson());
+
+                Flowable<JsonDocument> firstOneAfterJackLivedInLondon = persistence.readSourceDocuments(tx, timestamp, namespace,
+                        "Address", "london", JsonNavigationPath.from("$.history.previousAddresses[]"),
+                        "Person", Range.firstAfter(1, jack.key().id()));
+                assertThat(firstOneAfterJackLivedInLondon.map(JsonDocument::jackson).blockingIterable())
+                        .as("People with london in previousAddresses[]")
+                        .containsExactly( jill.jackson());
+
+                Flowable<JsonDocument> livedInParis = persistence.readSourceDocuments(tx, timestamp, namespace,
+                        "Address", "paris", JsonNavigationPath.from("$.history.previousAddresses[]"),
+                        "Person", Range.unbounded());
+                assertThat(livedInParis.map(JsonDocument::jackson).blockingIterable())
+                        .as("People with paris in previousAddresses[]")
+                        .containsExactly(jack.jackson());
+
+
+            } finally {
+                persistence.deleteAllEntities(tx, namespace, "Person", specification).blockingAwait();
+                persistence.deleteAllEntities(tx, namespace, "Address", specification).blockingAwait();
+                persistence.deleteAllEntities(tx, namespace, "FunkyLongAddress", specification).blockingAwait();
+            }
+        }
+    }
+
+    @Test
     public void testReadDocuments() {
         // Create 12 persons.
         ZonedDateTime timestamp = parse("2000-01-01T00:00:00.000Z");
