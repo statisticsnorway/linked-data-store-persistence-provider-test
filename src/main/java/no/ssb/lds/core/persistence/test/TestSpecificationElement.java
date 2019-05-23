@@ -5,6 +5,7 @@ import no.ssb.lds.api.specification.SpecificationElement;
 import no.ssb.lds.api.specification.SpecificationElementType;
 import no.ssb.lds.api.specification.SpecificationValidator;
 
+import java.util.Collections;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
@@ -78,6 +79,11 @@ public class TestSpecificationElement implements SpecificationElement {
     @Override
     public SpecificationElement getItems() {
         return items;
+    }
+
+    @Override
+    public Set<String> getRequired() {
+        return Collections.emptySet();
     }
 
     @Override
