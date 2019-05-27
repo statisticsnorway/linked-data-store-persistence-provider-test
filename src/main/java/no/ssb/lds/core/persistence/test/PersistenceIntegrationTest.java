@@ -996,7 +996,7 @@ public abstract class PersistenceIntegrationTest {
 
     private void readBackLinksAndCheckRelations(Transaction tx, String targetEntity, String targetId, String sourceEntity, String jsonNavigationPath, ZonedDateTime timestamp, Map<String, Map<String, List<String>>> relationsByTarget) {
         List<String> actualDocuments = new ArrayList<>();
-        ((Neo4jPersistence) persistence).readReverseLinkedDocuments(tx, timestamp, namespace, targetEntity, targetId, JsonNavigationPath.from(jsonNavigationPath), sourceEntity, Range.unbounded())
+        ((Neo4jPersistence) persistence).readSourceDocuments(tx, timestamp, namespace, targetEntity, targetId, JsonNavigationPath.from(jsonNavigationPath), sourceEntity, Range.unbounded())
                 .blockingForEach(actualJsonDocument -> actualDocuments.add("/" + actualJsonDocument.key().entity() + "/" + actualJsonDocument.key().id()));
         String targetLink = "/" + targetEntity + "/" + targetId;
         List<String> expectedLinks = relationsByTarget.get(targetLink).get(jsonNavigationPath);

@@ -5,10 +5,10 @@ import no.ssb.lds.api.specification.SpecificationElement;
 import no.ssb.lds.api.specification.SpecificationElementType;
 import no.ssb.lds.api.specification.SpecificationValidator;
 
-import java.util.Collections;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
+import java.util.stream.Collectors;
 
 public class TestSpecificationElement implements SpecificationElement {
 
@@ -20,6 +20,8 @@ public class TestSpecificationElement implements SpecificationElement {
     private final Set<String> refTypes;
     private final Map<String, SpecificationElement> properties;
     private final SpecificationElement items;
+    private boolean required;
+
 
     public TestSpecificationElement(String name, SpecificationElementType specificationElementType, Set<String> jsonTypes, List<SpecificationValidator> validators, Set<String> refTypes, Map<String, SpecificationElement> properties, SpecificationElement items) {
         this.name = name;
@@ -82,8 +84,19 @@ public class TestSpecificationElement implements SpecificationElement {
     }
 
     @Override
+    public boolean isRequired() {
+        return required;
+    }
+
+    @Override
     public Set<String> getRequired() {
-        return Collections.emptySet();
+        return getProperties().keySet().stream()
+                .filter(propertyName -> getProperties().get(propertyName).isRequired())
+                .collect(Collectors.toSet());
+    }
+
+    void setRequired(boolean required) {
+        this.required = required;
     }
 
     @Override
