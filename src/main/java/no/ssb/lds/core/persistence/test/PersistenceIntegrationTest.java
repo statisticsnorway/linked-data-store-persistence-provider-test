@@ -14,43 +14,22 @@ import no.ssb.lds.api.persistence.reactivex.Range;
 import no.ssb.lds.api.persistence.reactivex.RxJsonPersistence;
 import no.ssb.lds.api.specification.Specification;
 import no.ssb.lds.api.specification.SpecificationElementType;
-import no.ssb.lds.core.persistence.neo4j.Neo4jPersistence;
 import org.json.JSONException;
 import org.skyscreamer.jsonassert.JSONAssert;
 import org.testng.annotations.Test;
 
 import java.time.ZoneId;
 import java.time.ZonedDateTime;
-import java.util.ArrayList;
-import java.util.Collections;
-import java.util.Iterator;
-import java.util.LinkedHashMap;
-import java.util.LinkedHashSet;
-import java.util.List;
-import java.util.Map;
-import java.util.Set;
+import java.util.*;
 import java.util.concurrent.TimeUnit;
 import java.util.stream.Collectors;
 
 import static java.lang.String.format;
-import static java.time.ZonedDateTime.now;
-import static java.time.ZonedDateTime.of;
-import static java.time.ZonedDateTime.parse;
+import static java.time.ZonedDateTime.*;
 import static no.ssb.lds.api.persistence.json.JsonTools.mapper;
-import static no.ssb.lds.core.persistence.test.SpecificationBuilder.arrayNode;
-import static no.ssb.lds.core.persistence.test.SpecificationBuilder.arrayRefNode;
-import static no.ssb.lds.core.persistence.test.SpecificationBuilder.booleanNode;
-import static no.ssb.lds.core.persistence.test.SpecificationBuilder.numericNode;
-import static no.ssb.lds.core.persistence.test.SpecificationBuilder.objectNode;
-import static no.ssb.lds.core.persistence.test.SpecificationBuilder.refNode;
-import static no.ssb.lds.core.persistence.test.SpecificationBuilder.stringNode;
+import static no.ssb.lds.core.persistence.test.SpecificationBuilder.*;
 import static org.assertj.core.api.Assertions.assertThat;
-import static org.testng.Assert.assertEquals;
-import static org.testng.Assert.assertFalse;
-import static org.testng.Assert.assertNotNull;
-import static org.testng.Assert.assertNotSame;
-import static org.testng.Assert.assertNull;
-import static org.testng.Assert.assertTrue;
+import static org.testng.Assert.*;
 
 public abstract class PersistenceIntegrationTest {
 
