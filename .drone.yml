@@ -1,0 +1,43 @@
+kind: pipeline
+name: default
+
+steps:
+  - name: authenticate
+    image: robertstettner/drone-mvn-auth
+    pull: true
+    settings:
+      servers:
+        from_secret: maven_servers
+
+  - name: publish-maven
+    image: maven:3-jdk-11
+    commands:
+      - mvn clean package deploy -P ssb-bip, -DskipTests=true -Djdk.tls.client.protocols="TLSv1.2" --batch-mode --global-settings settings.xml
+    environment:
+      MAVEN_HOME: /drone/src/.m2
+      M2_HOME: /drone/src/.m2
+
+  - name: slack
+    image: plugins/slack
+    settings:
+      webhook:
+        from_secret: slack_webhook_url
+      channel: bip-ci-test
+    when:
+      status: [ success, failure ]
+    depends_on:
+      - publish-maven
+
+---
+kind: secret
+name: maven_servers
+get:
+  path: drone-maven-servers
+  name: ssb-bip-maven-servers
+
+---
+kind: secret
+name: slack_webhook_url
+get:
+  path: drone-slack-webhook-url
+  name: slack-webhook-url
