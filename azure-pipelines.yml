@@ -53,13 +53,5 @@ jobs:
 
     # Steps in this Job
     steps:
-      # Authenticate Maven to Nexus using predefined Service Connections
-      # (Project Settings->Pipelines->Service Connections)
-      - template: maven/task-authenticate.yml@templates
-
-      #Maven caching to speed up pipeline build time
-      - template: maven/task-cache.yml@templates
-
-      # Deploy artifact to Nexus
-      - ${{ if eq(variables['Build.SourceBranch'], 'refs/heads/master') }}:
-          - template: maven/task-install-and-deploy-to-nexus.yml@templates
+      # Complete maven build task
+      - template: maven/task-maven-complete.yml@templates
