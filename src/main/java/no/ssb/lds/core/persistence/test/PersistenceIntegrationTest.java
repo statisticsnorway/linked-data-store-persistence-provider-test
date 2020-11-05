@@ -20,16 +20,36 @@ import org.testng.annotations.Test;
 
 import java.time.ZoneId;
 import java.time.ZonedDateTime;
-import java.util.*;
+import java.util.ArrayList;
+import java.util.Collections;
+import java.util.Iterator;
+import java.util.LinkedHashMap;
+import java.util.LinkedHashSet;
+import java.util.List;
+import java.util.Map;
+import java.util.Set;
 import java.util.concurrent.TimeUnit;
 import java.util.stream.Collectors;
 
 import static java.lang.String.format;
-import static java.time.ZonedDateTime.*;
+import static java.time.ZonedDateTime.now;
+import static java.time.ZonedDateTime.of;
+import static java.time.ZonedDateTime.parse;
 import static no.ssb.lds.api.persistence.json.JsonTools.mapper;
-import static no.ssb.lds.core.persistence.test.SpecificationBuilder.*;
+import static no.ssb.lds.core.persistence.test.SpecificationBuilder.arrayNode;
+import static no.ssb.lds.core.persistence.test.SpecificationBuilder.arrayRefNode;
+import static no.ssb.lds.core.persistence.test.SpecificationBuilder.booleanNode;
+import static no.ssb.lds.core.persistence.test.SpecificationBuilder.numericNode;
+import static no.ssb.lds.core.persistence.test.SpecificationBuilder.objectNode;
+import static no.ssb.lds.core.persistence.test.SpecificationBuilder.refNode;
+import static no.ssb.lds.core.persistence.test.SpecificationBuilder.stringNode;
 import static org.assertj.core.api.Assertions.assertThat;
-import static org.testng.Assert.*;
+import static org.testng.Assert.assertEquals;
+import static org.testng.Assert.assertFalse;
+import static org.testng.Assert.assertNotNull;
+import static org.testng.Assert.assertNotSame;
+import static org.testng.Assert.assertNull;
+import static org.testng.Assert.assertTrue;
 
 public abstract class PersistenceIntegrationTest {
 
@@ -73,30 +93,57 @@ public abstract class PersistenceIntegrationTest {
     }
 
     protected Specification buildSpecification() {
-        return SpecificationBuilder.createSpecificationAndRoot(Set.of(
-                objectNode(SpecificationElementType.MANAGED, "Person", Set.of(
-                        stringNode("firstname"),
-                        stringNode("lastname"),
-                        numericNode("born"),
-                        numericNode("bornWeightKg"),
-                        booleanNode("isHuman"),
-                        objectNode("history", Set.of(
-                                refNode("currentAddress", Set.of("Address", "FunkyLongAddress")),
-                                refNode("workAddress", Set.of("FunkyLongAddress", "Address")),
-                                arrayRefNode("previousAddresses", Set.of("Address", "FunkyLongAddress"), stringNode("[]"))
+        return SpecificationBuilder.createSpecificationAndRoot(
+                Set.of(
+                        objectNode(SpecificationElementType.MANAGED, "Person", Set.of(
+                                stringNode("firstname"),
+                                stringNode("lastname"),
+                                numericNode("born"),
+                                numericNode("bornWeightKg"),
+                                booleanNode("isHuman"),
+                                objectNode("history", Set.of(
+                                        refNode("currentAddress", Set.of("Address", "FunkyLongAddress")),
+                                        refNode("workAddress", Set.of("FunkyLongAddress", "Address")),
+                                        arrayRefNode("previousAddresses", Set.of("Address", "FunkyLongAddress"), stringNode("[]"))
+                                ))
+                        )),
+                        objectNode(SpecificationElementType.MANAGED, "Address", Set.of(
+                                stringNode("city"),
+                                stringNode("state"),
+                                stringNode("country")
+                        )),
+                        objectNode(SpecificationElementType.MANAGED, "FunkyLongAddress", Set.of(
+                                stringNode("city"),
+                                stringNode("state"),
+                                stringNode("country")
                         ))
-                )),
-                objectNode(SpecificationElementType.MANAGED, "Address", Set.of(
-                        stringNode("city"),
-                        stringNode("state"),
-                        stringNode("country")
-                )),
-                objectNode(SpecificationElementType.MANAGED, "FunkyLongAddress", Set.of(
-                        stringNode("city"),
-                        stringNode("state"),
-                        stringNode("country")
-                ))
-        ));
+                ),
+                "type Person @domain {\n" +
+                        "  firstname: String\n" +
+                        "  lastname: String\n" +
+                        "  born: Int\n" +
+                        "  bornWeightKg: Float\n" +
+                        "  isHuman: Boolean\n" +
+                        "  history: History\n" +
+                        "}\n" +
+                        "type History {\n" +
+                        "  currentAddress: AddressType @link\n" +
+                        "  workAddress: AddressType @link\n" +
+                        "  previousAddresses: [AddressType] @link\n" +
+                        "}\n" +
+                        "interface AddressType {\n" +
+                        "}\n" +
+                        "type Address implements AddressType @domain {\n" +
+                        "  city: String\n" +
+                        "  state: String\n" +
+                        "  country: String\n" +
+                        "}\n" +
+                        "type FunkyLongAddress implements AddressType @domain {\n" +
+                        "  city: String\n" +
+                        "  state: String\n" +
+                        "  country: String\n" +
+                        "}"
+        );
     }
 
     private JsonDocument createPerson(String id, ZonedDateTime timestamp) {
@@ -803,11 +850,16 @@ public abstract class PersistenceIntegrationTest {
 
     @Test
     public void thatSimpleArrayValuesAreIntact() {
-        Specification specification = SpecificationBuilder.createSpecificationAndRoot(Set.of(
-                objectNode(SpecificationElementType.MANAGED, "People", Set.of(
-                        arrayNode("name", stringNode("[]"))
-                ))
-        ));
+        Specification specification = SpecificationBuilder.createSpecificationAndRoot(
+                Set.of(
+                        objectNode(SpecificationElementType.MANAGED, "People", Set.of(
+                                arrayNode("name", stringNode("[]"))
+                        ))
+                ),
+                "type People @domain {\n" +
+                        "  name: [String]\n" +
+                        "}"
+        );
         try (Transaction transaction = persistence.createTransaction(false)) {
             ZonedDateTime oct18 = of(2018, 10, 7, 19, 49, 26, (int) TimeUnit.MILLISECONDS.toNanos(307), ZoneId.of("Etc/UTC"));
             ObjectNode doc = mapper.createObjectNode();
@@ -821,16 +873,25 @@ public abstract class PersistenceIntegrationTest {
 
     @Test
     public void thatComplexArrayValuesAreIntact() {
-        Specification specification = SpecificationBuilder.createSpecificationAndRoot(Set.of(
-                objectNode(SpecificationElementType.MANAGED, "People", Set.of(
-                        arrayNode("name",
-                                objectNode(SpecificationElementType.EMBEDDED, "[]", Set.of(
-                                        stringNode("first"),
-                                        stringNode("last")
-                                ))
-                        )
-                ))
-        ));
+        Specification specification = SpecificationBuilder.createSpecificationAndRoot(
+                Set.of(
+                        objectNode(SpecificationElementType.MANAGED, "People", Set.of(
+                                arrayNode("name",
+                                        objectNode(SpecificationElementType.EMBEDDED, "[]", Set.of(
+                                                stringNode("first"),
+                                                stringNode("last")
+                                        ))
+                                )
+                        ))
+                ),
+                "type People @domain {\n" +
+                        "  name: [Name]\n" +
+                        "}\n" +
+                        "type Name {\n" +
+                        "  first: String\n" +
+                        "  last: String\n" +
+                        "}"
+        );
         try (Transaction transaction = persistence.createTransaction(false)) {
             ZonedDateTime oct18 = of(2018, 10, 7, 19, 49, 26, (int) TimeUnit.MILLISECONDS.toNanos(307), ZoneId.of("Etc/UTC"));
             ObjectNode doc = mapper.createObjectNode();

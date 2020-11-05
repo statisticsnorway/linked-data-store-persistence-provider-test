@@ -1,5 +1,7 @@
 package no.ssb.lds.core.persistence.test;
 
+import graphql.schema.idl.SchemaParser;
+import graphql.schema.idl.TypeDefinitionRegistry;
 import no.ssb.lds.api.specification.Specification;
 import no.ssb.lds.api.specification.SpecificationElement;
 import no.ssb.lds.api.specification.SpecificationElementType;
@@ -51,7 +53,7 @@ public class SpecificationBuilder {
         return mapElement;
     }
 
-    public static Specification createSpecificationAndRoot(Set<TestSpecificationElement> managedElements) {
+    public static Specification createSpecificationAndRoot(Set<TestSpecificationElement> managedElements, String sdl) {
         TestSpecificationElement root = new TestSpecificationElement(
                 "root",
                 SpecificationElementType.ROOT,
@@ -63,6 +65,8 @@ public class SpecificationBuilder {
         );
         managedElements.forEach(e -> e.parent(root));
         return new Specification() {
+            TypeDefinitionRegistry typeDefinitionRegistry = new SchemaParser().parse(sdl);
+
             @Override
             public SpecificationElement getRootElement() {
                 return root;
@@ -71,6 +75,11 @@ public class SpecificationBuilder {
             @Override
             public Set<String> getManagedDomains() {
                 return managedElements.stream().map(e -> e.getName()).collect(Collectors.toSet());
+            }
+
+            @Override
+            public TypeDefinitionRegistry typeDefinitionRegistry() {
+                return typeDefinitionRegistry;
             }
         };
     }
